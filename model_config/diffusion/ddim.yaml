@@ -1,0 +1,8 @@
+## Configuration file for specifying diffusion method proposed in 
+#  "Denoising Diffusion Implicit Models" (DDIM) by Song etal (2020).
+#
+
+diff_type: 'ddim'
+sampling_mtd: 'ddim'
+sampling_steps: 400
+bit_partition: ''

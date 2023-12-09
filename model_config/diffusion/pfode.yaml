@@ -1,0 +1,4 @@
+diff_type: 'pfode'
+sampling_mtd: 'heun'
+sampling_steps: 400
+bit_partition: ''

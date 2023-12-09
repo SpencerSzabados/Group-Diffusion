@@ -1,0 +1,28 @@
+data_dir: '/home/data/cifar10'
+image_size: 32
+img_channels: 3
+data_augment: 8
+aug_para:
+  xflip: 1
+  yflip: 0.12
+  rotate_int: 0.
+  translate_int: 0. 
+  translate_int_max: 0.
+  scale: 0
+  rotate_frac: 0.12
+  aniso: 0.12
+  translate_frac: 0.12
+  scale_std: 0.2
+  rotate_frac_max: 1
+  aniso_std: 0.2
+  aniso_rotate_prob: 0.12
+  translate_frac_std: 0.125
+  brightness: 0.0
+  contrast: 0.0
+  lumaflip: 0.0
+  hue: 0.0
+  saturation: 0.0
+  brightness_std: 0.2
+  contrast_std: 0.5
+  hue_max: 1
+  saturation_std: 1

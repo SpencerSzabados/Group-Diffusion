@@ -1,0 +1,6 @@
+sampling: True
+compile: False
+logger_dir: 'dummy'
+stat_summary_dir: '/ssd005/projects/watml/field/logs'
+logger_level: 'INFO'
+exp_name: MISSING

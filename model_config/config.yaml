@@ -1,0 +1,11 @@
+## Model launch configuration file. Use to configure different models paramters that would
+# otherwise need to be speciified in command line arguments.
+
+defaults:
+  - model: 1stage_full
+  - data: cifar10
+  - sampling: pfode_default
+  - slurm: dummy
+  - training: analog_bit_ddim
+  - misc: default
+  - diffusion: ddim

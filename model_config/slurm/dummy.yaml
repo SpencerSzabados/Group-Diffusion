@@ -1,0 +1,5 @@
+## The program expects a slurm user when run. File describes a 'dummy' slerm user and id
+# atributtes are fetched automatically when run on a live slurm environment, otherwise, 
+# the file serves to satisfy expected launch conditiions.
+user_id: 'dummy'
+slurm_id: '-1'

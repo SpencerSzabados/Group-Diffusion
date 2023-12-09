@@ -1,0 +1,17 @@
+schedule_sampler: 'uniform-ddim'
+lr: 0.0001
+weight_decay: 0.0 
+lr_anneal_steps: 'inf'
+global_batch_size: 128
+batch_size: -1
+microbatch: -1
+ema_rate: '0.99,0.999,0.9999,0.99995'
+log_interval: 10
+save_interval: 10000
+sampling_interval: 20000
+resume_checkpoint: ''
+use_fp16: False
+fp16_scale_growth: 0.001
+warmpup_steps: 10000
+weight_schedule: 'uniform'
+dropout: 0.3
