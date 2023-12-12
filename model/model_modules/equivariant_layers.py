@@ -97,7 +97,6 @@ class GDownsample(nn.Module):
 
         stride = 2 if dims != 3 else (1, 2, 2)
         if use_conv:
-            #print("g_input, g_output, in_channels, out_channels: "+str(g_input)+", "+str(g_output)+", "+str(out_channels), flush=True)
             self.op = gconv_nd(dims=self.dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, stride=stride, padding=1)
         else:
             assert self.channels == self.out_channels
@@ -156,7 +155,7 @@ class SplitGConv2D(nn.Module):
         # sets values for nit, nto paramters
         self.nti, self.nto, self.inds = self.make_indices()
 
-        self.in_channels = in_channels
+        self.in_channels = in_channels//self.nti
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
@@ -164,9 +163,9 @@ class SplitGConv2D(nn.Module):
         self.bias = bias
         
         self.weight = Parameter(pt.Tensor(
-            out_channels, in_channels, self.nti, *kernel_size))
+            out_channels, self.in_channels, self.nti, *kernel_size))
         if bias:
-            self.bias = Parameter(pt.Tensor(out_channels))
+            self.bias = Parameter(pt.Tensor(self.out_channels))
         else:
             self.register_parameter('bias', None)
         self.reset_parameters()
@@ -218,23 +217,17 @@ class SplitGConv2D(nn.Module):
         return w_transformed.contiguous()
     
     def transform_filter_2d_nchw(self, y, shape):
-        # DEBUG
-        print("tranform_filter shape: "+str(shape))
         return y.view(shape[0], shape[1]*shape[2], shape[3], shape[4])
 
     def forward(self, input):
         tw = self.transform_filter_2d_ncchw(self.weight, self.inds)
         tw_shape = (self.out_channels*self.nto,
-                    self.in_channels,
+                    self.in_channels*self.nti,
                     self.ksize, self.ksize)
         tw = tw.view(tw_shape)
 
-        # DEBUG
-        print("gconv_input_shape: "+str(input.size()), flush=True)
-        print("gconv in_channels*nti: "+str(self.in_channels*self.nti), flush=True)
-
         input_shape = input.size()
-        input = input.view(input_shape[0], self.in_channels, input_shape[-2], input_shape[-1])
+        input = input.view(input_shape[0], self.in_channels*self.nti, input_shape[-2], input_shape[-1])
 
         y = F.conv2d(input, weight=tw, bias=None, stride=self.stride,
                         padding=self.padding)
@@ -242,13 +235,11 @@ class SplitGConv2D(nn.Module):
         batch_size, _, ny_out, nx_out = y.size()
         y = y.view(batch_size, self.out_channels, self.nto, ny_out, nx_out)
 
-        print('='*10)
-        print(y.shape)
-
         if self.bias is not None:
             bias = self.bias.view(1, self.out_channels, 1, 1, 1) # Applies bias to out_channels and not out_channels*nto
             y = y + bias
 
+        # TODO - remove this line and add GAvgPool2D layers at each occurance of gconv
         y = pt.mean(y, dim=2)
         # y = self.transform_filter_2d_nchw(y, [batch_size, self.out_channels, self.nto, ny_out, nx_out])
 
@@ -302,17 +293,44 @@ class GMaxPool2D(nn.Module):
 
     def compute_scale(self):
         if self.g_input == 'C4':
-            self.scale *= 4
+            self.scale = 4
         elif self.g_input == 'D4':
-            self.scale *= 8
+            self.scale = 8
 
     def _forward(self, x):
         # Rshape input tensor and scale dimention by scale
-        input_shape = x.shape()
+        input_shape = x.shape
         input_reshaped = x.reshape([-1,input_shape[1],input_shape[2],input_shape[3]//self.scale, self.scale])
         max_per_group = pt.max(input_reshaped, -1)
 
         return max_per_group
+
+    def forward(self, x):
+        return self._forward(self, x)
+
+
+class GAvgPool2D(nn.Module):
+    """
+        Average pool over all orientations.
+    """
+    def __init__(self, g_input, **kwargs):
+        super(GMaxPool2D, self).__init__(**kwargs)
+        self.g_input = g_input
+        self.scale = 1
+
+    def compute_scale(self):
+        if self.g_input == 'C4':
+            self.scale = 4
+        elif self.g_input == 'D4':
+            self.scale = 8
+
+    def _forward(self, x):
+        # Rshape input tensor and scale dimention by scale
+        input_shape = x.shape
+        input_reshaped = x.reshape([-1,input_shape[1],input_shape[2],input_shape[3]//self.scale, self.scale])
+        mean_per_group = pt.mean(input_reshaped, -1)
+
+        return mean_per_group
 
     def forward(self, x):
         return self._forward(self, x)

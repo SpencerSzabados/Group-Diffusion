@@ -166,15 +166,12 @@ class TrainLoop:
         while (
             not self.lr_anneal_steps
             or self.step < self.lr_anneal_steps
-            or self.global_step < self.total_training_steps
         ):
             batch, cond = next(self.data)
             self.run_step(batch, cond)
             saved = False
-            if (
-                self.global_step
-                and self.save_interval != -1
-                and self.global_step % self.save_interval == 0
+            if (self.save_interval != -1
+                and self.step % self.save_interval == 0
             ):
                 self.save()
                 saved = True
@@ -183,7 +180,7 @@ class TrainLoop:
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
 
-            if self.global_step % self.log_interval == 0:
+            if self.step % self.log_interval == 0:
                 logger.dumpkvs()
 
         # Save the last checkpoint if it wasn't already saved.
@@ -196,7 +193,6 @@ class TrainLoop:
         if took_step:
             self._update_ema()
             self.step += 1
-            self.global_step += 1
         self._anneal_lr()
         self.log_step()
     

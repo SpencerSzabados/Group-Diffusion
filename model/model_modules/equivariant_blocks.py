@@ -131,35 +131,28 @@ class GResBlock(TimestepBlock):
             nn.SiLU(),
             nn.Dropout(p=dropout),
             zero_module(
-                gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.out_channels, self.out_channels, 3, padding=1)
+                gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_input, in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=3, padding=1)
             )
         )
 
         if self.out_channels == self.in_channels:
-            # DEBUG
-            print("equivariant_blcoks l137", flush=True)
             self.skip_connection = nn.Identity()
         elif use_conv:
-            print("equivariant_blocks l140", flush=True)
             self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=1)
         else:
             self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=1)
 
     def _forward(self, x, emb):
 
-        print('-#'*100)
         if self.updown:
-            print('0.0-#')
             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
             h = in_rest(x)
             h = self.h_upd(h)
             x = self.x_upd(x)
             h = in_conv(h)
         else:
-            print('0.1-#')
             h = self.in_layers(x)
 
-        print('1-#')
         emb_out = self.emb_layers(emb).type(h.dtype)
         while len(emb_out.shape) < len(h.shape):
             emb_out = emb_out[..., None]
@@ -167,17 +160,14 @@ class GResBlock(TimestepBlock):
             
         if self.use_scale_shift_norm:
 
-            print('2.1-#')
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
             scale, shift = pt.chunk(emb_out, 2, dim=1)
             h = out_norm(h) * (1 + scale) + shift
             h = out_rest(h)
         else:
-            print('2.2-#')
             h = h + emb_out
             h = self.out_layers(h)
         
-        print('3-#')
         return self.skip_connection(x) + h
 
     def forward(self, x, emb):

@@ -110,14 +110,12 @@ class UNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
 
-        time_embed_dim = model_channels * 4
+        time_embed_dim = 4*model_channels
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
-
-        self.ipt_enc = nn.Conv2d(3, 192, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
@@ -139,25 +137,25 @@ class UNetModel(nn.Module):
                         dropout,
                         g_equiv=self.g_equiv,
                         g_input=self.g_output,
-                        out_channels=int(mult * model_channels),
+                        out_channels=int(mult*model_channels),
                         dims=dims,
                         use_checkpoint=use_checkpoint,
                         use_scale_shift_norm=use_scale_shift_norm,
                     )
                 ]
                 ch = int(mult * model_channels)
-                # if ds in attention_resolutions:
-                #     layers.append(
-                #         GAttentionBlock(
-                #             ch,
-                #             g_equiv=self.g_equiv,
-                #             g_input=self.g_output,
-                #             use_checkpoint=use_checkpoint,
-                #             num_heads=num_heads,
-                #             num_head_channels=num_head_channels,
-                #             use_new_attention_order=use_new_attention_order,
-                #         )
-                #     )
+                if ds in attention_resolutions:
+                    layers.append(
+                        GAttentionBlock(
+                            ch,
+                            g_equiv=self.g_equiv,
+                            g_input=self.g_output,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads,
+                            num_head_channels=num_head_channels,
+                            use_new_attention_order=use_new_attention_order,
+                        )
+                    )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
                 self._feature_size += ch
                 input_block_chans.append(ch)
@@ -192,119 +190,102 @@ class UNetModel(nn.Module):
                 ds *= 2
                 self._feature_size += ch
 
-        # self.middle_block = TimestepEmbedSequential(
-        #     GResBlock(
-        #         ch,
-        #         time_embed_dim,
-        #         dropout,
-        #         g_equiv=self.g_equiv,
-        #         g_input=self.g_output,
-        #         dims=dims,
-        #         use_checkpoint=use_checkpoint,
-        #         use_scale_shift_norm=use_scale_shift_norm,
-        #     ),
-        #     GAttentionBlock(
-        #         ch,
-        #         g_equiv=self.g_equiv,
-        #         g_input=self.g_output,
-        #         use_checkpoint=use_checkpoint,
-        #         num_heads=num_heads,
-        #         num_head_channels=num_head_channels,
-        #         use_new_attention_order=use_new_attention_order,
-        #     ),
-        #     GResBlock(
-        #         ch,
-        #         time_embed_dim,
-        #         dropout,
-        #         g_equiv=self.g_equiv,
-        #         g_input=self.g_output,
-        #         dims=dims,
-        #         use_checkpoint=use_checkpoint,
-        #         use_scale_shift_norm=use_scale_shift_norm,
-        #     ),
-        # )
-        # self._feature_size += ch
+        self.middle_block = TimestepEmbedSequential(
+            GResBlock(
+                ch,
+                time_embed_dim,
+                dropout,
+                g_equiv=self.g_equiv,
+                g_input=self.g_output,
+                dims=dims,
+                use_checkpoint=use_checkpoint,
+                use_scale_shift_norm=use_scale_shift_norm,
+            ),
+            GAttentionBlock(
+                ch,
+                g_equiv=self.g_equiv,
+                g_input=self.g_output,
+                use_checkpoint=use_checkpoint,
+                num_heads=num_heads,
+                num_head_channels=num_head_channels,
+                use_new_attention_order=use_new_attention_order,
+            ),
+            GResBlock(
+                ch,
+                time_embed_dim,
+                dropout,
+                g_equiv=self.g_equiv,
+                g_input=self.g_output,
+                dims=dims,
+                use_checkpoint=use_checkpoint,
+                use_scale_shift_norm=use_scale_shift_norm,
+            ),
+        )
+        self._feature_size += ch
 
-        # self.output_blocks = nn.ModuleList([])
-        # for level, mult in list(enumerate(channel_mult))[::-1]:
-        #     for i in range(num_res_blocks + 1):
-        #         ich = input_block_chans.pop()
-        #         layers = [
-        #             GResBlock(
-        #                 ch + ich,
-        #                 time_embed_dim,
-        #                 dropout,
-        #                 g_equiv=self.g_equiv,
-        #                 g_input=self.g_output,
-        #                 out_channels=int(model_channels * mult),
-        #                 dims=dims,
-        #                 use_checkpoint=use_checkpoint,
-        #                 use_scale_shift_norm=use_scale_shift_norm,
-        #             )
-        #         ]
-        #         ch = int(model_channels * mult)
-        #         if ds in attention_resolutions:
-        #             layers.append(
-        #                 GAttentionBlock(
-        #                     ch,
-        #                     g_equiv=self.g_equiv,
-        #                     g_input=self.g_input,
-        #                     use_checkpoint=use_checkpoint,
-        #                     num_heads=num_heads_upsample,
-        #                     num_head_channels=num_head_channels,
-        #                     use_new_attention_order=use_new_attention_order,
-        #                 )
-        #             )
-        #         if level and i == num_res_blocks:
-        #             out_ch = ch
-        #             layers.append(
-        #                 GResBlock(
-        #                     ch,
-        #                     time_embed_dim,
-        #                     dropout,
-        #                     g_equiv=self.g_equiv,
-        #                     g_input=self.g_output,
-        #                     out_channels=out_ch,
-        #                     dims=dims,
-        #                     use_checkpoint=use_checkpoint,
-        #                     use_scale_shift_norm=use_scale_shift_norm,
-        #                     up=True,
-        #                 )
-        #                 if resblock_updown
-        #                 else GUpsample(
-        #                     ch,
-        #                     g_input=self.g_output,
-        #                     use_conv=self.conv_resample, 
-        #                     dims=dims, 
-        #                     out_channels=out_ch
-        #                 )
-        #             )
-        #             ds //= 2
-        #         self.output_blocks.append(TimestepEmbedSequential(*layers))
-        #         self._feature_size += ch
+        self.output_blocks = nn.ModuleList([])
+        for level, mult in list(enumerate(channel_mult))[::-1]:
+            for i in range(num_res_blocks + 1):
+                ich = input_block_chans.pop()
+                layers = [
+                    GResBlock(
+                        ch + ich,
+                        time_embed_dim,
+                        dropout,
+                        g_equiv=self.g_equiv,
+                        g_input=self.g_output,
+                        out_channels=int(model_channels * mult),
+                        dims=dims,
+                        use_checkpoint=use_checkpoint,
+                        use_scale_shift_norm=use_scale_shift_norm,
+                    )
+                ]
+                ch = int(model_channels * mult)
+                if ds in attention_resolutions:
+                    layers.append(
+                        GAttentionBlock(
+                            ch,
+                            g_equiv=self.g_equiv,
+                            g_input=self.g_input,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads_upsample,
+                            num_head_channels=num_head_channels,
+                            use_new_attention_order=use_new_attention_order,
+                        )
+                    )
+                if level and i == num_res_blocks:
+                    out_ch = ch
+                    layers.append(
+                        GResBlock(
+                            ch,
+                            time_embed_dim,
+                            dropout,
+                            g_equiv=self.g_equiv,
+                            g_input=self.g_output,
+                            out_channels=out_ch,
+                            dims=dims,
+                            use_checkpoint=use_checkpoint,
+                            use_scale_shift_norm=use_scale_shift_norm,
+                            up=True,
+                        )
+                        if resblock_updown
+                        else GUpsample(
+                            ch,
+                            g_input=self.g_output,
+                            use_conv=self.conv_resample, 
+                            dims=dims, 
+                            out_channels=out_ch
+                        )
+                    )
+                    ds //= 2
+                self.output_blocks.append(TimestepEmbedSequential(*layers))
+                self._feature_size += ch
 
         self.out = nn.Sequential(
             normalization(ch),
             nn.SiLU(),
-            zero_module(gconv_nd(dims, self.g_equiv, self.g_output, self.g_output,input_ch, out_channels, kernel_size=3, padding=1)),
+            zero_module(gconv_nd(dims, self.g_equiv, self.g_output, self.g_output, input_ch, out_channels, kernel_size=3, padding=1)),
         )
-
-    def convert_to_fp16(self):
-        """
-        Convert the torso of the model to float16.
-        """
-        self.input_blocks.apply(convert_module_to_f16)
-        self.middle_block.apply(convert_module_to_f16)
-        self.output_blocks.apply(convert_module_to_f16)
-
-    def convert_to_fp32(self):
-        """
-        Convert the torso of the model to float32.
-        """
-        self.input_blocks.apply(convert_module_to_f32)
-        self.middle_block.apply(convert_module_to_f32)
-        self.output_blocks.apply(convert_module_to_f32)
-       
 
     def convert_to_fp16(self):
         """
@@ -344,9 +325,9 @@ class UNetModel(nn.Module):
 
         # DEBUG
         # Print structure of network 
-        print('#'*20+" INPUT ")
-        t = x.type(self.dtype)
-        ts = []
+        # print('#'*20+" INPUT ")
+        # t = x.type(self.dtype)
+        # ts = []
         # for idx, module in enumerate(self.input_blocks):
         #     print('='*10 + str(idx) + '='*10)
 
@@ -361,27 +342,16 @@ class UNetModel(nn.Module):
         #     print('='*10)
         #     print(module, flush=True)
 
-        print('#'*20+" INPUT ")
         h = x.type(self.dtype)
         for idx, module in enumerate(self.input_blocks):
-            print('='*10 + str(idx) + '='*10)
-            print(module)
-            print("in h_shape: "+str(h.shape))
             h = module(h, emb)
             hs.append(h)     
-            print("out h_shape: "+str(h.shape))
 
-        # print('#'*20+" MIDDEL ")
-        # print("in h_shape: "+str(h.shape))
-        # h = self.middle_block(h, emb)
-        # print("out h_shape: "+str(h.shape))
+        h = self.middle_block(h, emb)
 
-        # print('#'*20+" OUTPUT ")
-        # for module in self.output_blocks:
-        #     print("in h_shape: "+str(h.shape))
-        #     h = th.cat([h, hs.pop()], dim=1)
-        #     h = module(h, emb)
-        #     print("out h_shape: "+str(h.shape))
+        for module in self.output_blocks:
+            h = th.cat([h, hs.pop()], dim=1)
+            h = module(h, emb)
 
         h = h.type(x.dtype)
         return self.out(h)
