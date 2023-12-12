@@ -29,6 +29,7 @@ from ..utils.nn import (
 )
 # Libraries for group convolutional layers
 from groupy.gconv.make_gconv_indices import make_c4_z2_indices, make_c4_p4_indices, make_d4_z2_indices, make_d4_p4m_indices
+from groupy.gconv.pytorch_gconv.pooling import plane_group_spatial_max_pooling
 
 
 ### ---[ Transformation layers ]-----------------
@@ -43,16 +44,20 @@ class GUpsample(nn.Module):
                  upsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, g_input, g_output, dims=2, out_channels=None):
+    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
         self.g_input = g_input
-        self.g_output = g_output
+        self.g_output = g_input
         self.dims = dims
+
+        assert use_conv == True or use_conv == False
+        assert isinstance(g_input, str)
+
         if use_conv:
-            self.conv = gconv_nd(dims, True, self.g_input, self.g_output, self.channels, self.out_channels, 3, padding=1)
+            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, padding=1)
 
     def forward(self, x):
         assert x.shape[1] == self.channels
@@ -77,24 +82,29 @@ class GDownsample(nn.Module):
                  downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, g_input, g_output, use_conv, dims=2, out_channels=None):
+    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
+        self.g_equiv = g_equiv
         self.g_input = g_input
-        self.g_output = g_output
+        self.g_output = g_input
         self.dims = dims
+
+        assert use_conv == True or use_conv == False
+        assert isinstance(g_input, str)
+
         stride = 2 if dims != 3 else (1, 2, 2)
         if use_conv:
             #print("g_input, g_output, in_channels, out_channels: "+str(g_input)+", "+str(g_output)+", "+str(out_channels), flush=True)
-            self.op = gconv_nd(dims, g_equiv=True, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, stride=stride, padding=1)
+            self.op = gconv_nd(dims=self.dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, stride=stride, padding=1)
         else:
             assert self.channels == self.out_channels
             self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
 
     def forward(self, x):
-        assert x.shape[1] == self.channels
+        assert x.shape[1] == self.channels, f' {x.shape[1]} || {self.channels}'
         return self.op(x)
 
 # ---[ Equivariant transformations ]-------------
@@ -196,7 +206,7 @@ class SplitGConv2D(nn.Module):
     
     # Tranform filter output to be of the form [batch_size, nto*out_channels, input_shape[1], input_shape[0]]
     def transform_filter_2d_ncchw(self, w, inds):
-        inds_reshape = inds.reshape((-1, inds.shape[-1])).astype(np.int64)
+        inds_reshape = inds.reshape((-1, inds.shape[-1])).astype(np.int32)
         w_indexed = w[:, :, inds_reshape[:, 0].tolist(), inds_reshape[:, 1].tolist(), inds_reshape[:, 2].tolist()]
         w_indexed = w_indexed.view(w_indexed.size()[0], 
                                    w_indexed.size()[1],
@@ -208,17 +218,23 @@ class SplitGConv2D(nn.Module):
         return w_transformed.contiguous()
     
     def transform_filter_2d_nchw(self, y, shape):
+        # DEBUG
+        print("tranform_filter shape: "+str(shape))
         return y.view(shape[0], shape[1]*shape[2], shape[3], shape[4])
 
     def forward(self, input):
         tw = self.transform_filter_2d_ncchw(self.weight, self.inds)
-        tw_shape = (self.out_channels * self.nto,
-                    self.in_channels * self.nti,
+        tw_shape = (self.out_channels*self.nto,
+                    self.in_channels,
                     self.ksize, self.ksize)
         tw = tw.view(tw_shape)
 
+        # DEBUG
+        print("gconv_input_shape: "+str(input.size()), flush=True)
+        print("gconv in_channels*nti: "+str(self.in_channels*self.nti), flush=True)
+
         input_shape = input.size()
-        input = input.view(input_shape[0], self.in_channels*self.nti, input_shape[-2], input_shape[-1])
+        input = input.view(input_shape[0], self.in_channels, input_shape[-2], input_shape[-1])
 
         y = F.conv2d(input, weight=tw, bias=None, stride=self.stride,
                         padding=self.padding)
@@ -226,11 +242,15 @@ class SplitGConv2D(nn.Module):
         batch_size, _, ny_out, nx_out = y.size()
         y = y.view(batch_size, self.out_channels, self.nto, ny_out, nx_out)
 
+        print('='*10)
+        print(y.shape)
+
         if self.bias is not None:
             bias = self.bias.view(1, self.out_channels, 1, 1, 1) # Applies bias to out_channels and not out_channels*nto
             y = y + bias
 
-        y = self.transform_filter_2d_nchw(y, [batch_size, self.out_channels, self.nto, ny_out, nx_out])
+        y = pt.mean(y, dim=2)
+        # y = self.transform_filter_2d_nchw(y, [batch_size, self.out_channels, self.nto, ny_out, nx_out])
 
         return y
 
@@ -248,7 +268,11 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
     """
     if g_equiv == True:
         if dims == 2:
-            return GConv2D(g_input, g_output, *args, **kwargs)
+            # Deal we special case 
+            if g_input == 'Z2' and g_output == 'Z2':
+                return nn.Conv2d(*args, **kwargs)
+            else:
+                return GConv2D(g_input, g_output, *args, **kwargs)
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
     elif g_equiv == False:
         if dims == 1:
@@ -309,5 +333,7 @@ class GMaxPool2D(nn.Module):
 
 def symmetrize_block(features, num_filters, kerenl_size, h_):
     """
-    TODO - 
+    TODO - Implement symmetrization block that averages over all orientations of group actions and
+           returns unscaled number of channels opposed to a multiple of the input channels as done
+           by GrouPy.
     """

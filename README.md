@@ -1,18 +1,7 @@
 # TODO
-  + TODO - Understand what the difference is between the convolutions impememted in keras-gcnn
-           vs that in the tenserflow GrouPy module
-        + 
-  + TODO - Port the group invariant convolution, transformations, and pooling to pytorch
-  + TODO - Port network blocks from reference_code to pytorch using the avbove code
-  + TODO - Implement discriminator using the avobe blocks
-  + TODO - Understand the structure of the CM diffusion model
-  + TODO - Mofiy diffusion model architecture to use invariant convolutions and transformation  
-           operators.
-  + TODO - Data-type implementation used in GrouPy is depreicated needs to be changed to use pythons builtin dattypes.
-           "File "/usr/local/lib/python3.10/dist-packages/groupy/garray/Z2_array.py", line 48, in u_range
-              m = np.zeros((stop - start, 2), dtype=np.int)
-            File "/usr/local/lib/python3.10/dist-packages/numpy/__init__.py", line 284, in __getattr__
-            raise AttributeError("module {!r} has no attribute "AttributeError: module 'numpy' has no attribute 'int'. Did you mean: 'inf'?"
 
-# Inv-CM-GAN
-Group Invariant Consistency Generative Adversarial Model
+  + [] TODO - Correct channel sizes in GResBlock. The output channel changes when gconv is used so I must add a incremended scaling factor to keep the relation between in_channels and out_channels correct, otherwise, there will be an error when passing data between layers.
+  + [] TODO - Implement symmetrization blocks in reference code for use when sampling guassian noise during generation. This (verify) only needs to be used when sampling/generating data that is not from a group invariant distribution.
+
+# Group Invariant Diffusion Model
+Group Invariant (Consistency) Diffusion Model

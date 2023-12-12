@@ -66,7 +66,6 @@ class GResBlock(TimestepBlock):
         dropout,
         g_equiv,
         g_input,
-        g_output,
         out_channels=None,          # Default to in_channels if not set
         use_conv=False,
         use_scale_shift_norm=False,
@@ -79,95 +78,106 @@ class GResBlock(TimestepBlock):
     ):
         super().__init__()
     
+        self.g_equiv = g_equiv or False
+        self.g_input = g_input or None
+        
         # Detect input group and scale number of channels based on corresponding scaling factor
         # See 'equivariant_layers.py' for the origin of these values.
-        out_channels = out_channels or in_channels
-        if g_equiv == True:
-            if g_input == 'D4':
-                in_channels = int(in_channels*8)
-                out_channels = int(out_channels*8)
-            elif g_input == 'C4':
-                in_channels = int(in_channels*4)
-                out_channels = int(out_channels*4)
-            elif g_input == 'Z2':
-                in_channels = int(in_channels*1)
-                out_channels = int(out_channels*1)
-            else:
-                raise ValueError(f"unsupported g_input in GResBlock(): {g_input}")
-
+        nti = 1
+        if self.g_equiv:
+            if self.g_input == 'Z2':
+                nti = 1
+            elif self.g_input == 'C4':
+                nti = 4
+            elif self.g_input == 'D4':
+                nti = 8
+            else:    
+                raise ValueError(f"unsupported g_input in GResBock(): {g_input}")
+        
         self.in_channels = in_channels
         self.emb_channels = emb_channels
+        self.out_channels = out_channels or in_channels
+        
         self.dropout = dropout
-        self.out_channels = out_channels
         self.use_conv = use_conv
-        self.g_input = g_input or None
-        self.g_output = g_output or None
-        self.g_equiv = g_equiv or False
         self.kernel_size = kernel_size
         self.padding = padding
         self.use_checkpoint = use_checkpoint
         self.use_scale_shift_norm = use_scale_shift_norm
 
         self.in_layers = nn.Sequential(
-            normalization(self.in_channels),
+            normalization(in_channels),
             nn.SiLU(),
-            gconv_nd(dims, self.g_equiv, self.g_input, self.g_output, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=1),
+            gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_input, in_channels=self.in_channels, out_channels=self.out_channels, kernel_size=self.kernel_size, padding=1),
         )
 
         self.updown = up or down
 
         if up:
-            self.h_upd = GUpsample(self.in_channels, False, self.g_input, self.g_output, dims)
-            self.x_upd = GUpsample(self.in_channels, False, self.g_input, self.g_output, dims)
+            self.h_upd = GUpsample(self.in_channels, use_conv=False, g_equiv=True, g_input=self.g_input, dims=dims)
+            self.x_upd = GUpsample(self.in_channels, use_conv=False, g_equiv=True, g_input=self.g_input, dims=dims)
         elif down:
-            self.h_upd = GDownsample(self.in_channels, False, self.g_input, self.g_output, dims)
-            self.x_upd = GDownsample(self.in_channels, False, self.g_input, self.g_output, dims)
+            self.h_upd = GDownsample(self.in_channels, use_conv=False, g_equiv=True, g_input=self.g_input, dims=dims)
+            self.x_upd = GDownsample(self.in_channels, use_conv=False, g_equiv=True, g_input=self.g_input, dims=dims)
         else:
             self.h_upd = self.x_upd = nn.Identity()
 
         self.emb_layers = nn.Sequential(
             nn.SiLU(),
-            linear(
-                emb_channels,
-                2 * self.out_channels if use_scale_shift_norm else self.out_channels,
-            ),
+            linear(emb_channels, 2*self.out_channels if use_scale_shift_norm else self.out_channels)
         )
         self.out_layers = nn.Sequential(
             normalization(self.out_channels),
             nn.SiLU(),
             nn.Dropout(p=dropout),
             zero_module(
-                gconv_nd(dims, self.g_equiv, self.g_input, self.g_output, self.out_channels, self.out_channels, 3, padding=1)
-            ),
+                gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.out_channels, self.out_channels, 3, padding=1)
+            )
         )
 
         if self.out_channels == self.in_channels:
+            # DEBUG
+            print("equivariant_blcoks l137", flush=True)
             self.skip_connection = nn.Identity()
         elif use_conv:
-            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_output, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=1)
+            print("equivariant_blocks l140", flush=True)
+            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=1)
         else:
-            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_output, self.in_channels, self.out_channels, kernel_size=1)
+            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=1)
 
     def _forward(self, x, emb):
+
+        print('-#'*100)
         if self.updown:
+            print('0.0-#')
             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
             h = in_rest(x)
             h = self.h_upd(h)
             x = self.x_upd(x)
             h = in_conv(h)
         else:
+            print('0.1-#')
             h = self.in_layers(x)
+
+        print('1-#')
         emb_out = self.emb_layers(emb).type(h.dtype)
         while len(emb_out.shape) < len(h.shape):
             emb_out = emb_out[..., None]
+
+            
         if self.use_scale_shift_norm:
+
+            print('2.1-#')
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
             scale, shift = pt.chunk(emb_out, 2, dim=1)
             h = out_norm(h) * (1 + scale) + shift
             h = out_rest(h)
         else:
+            print('2.2-#')
             h = h + emb_out
             h = self.out_layers(h)
+        
+        print('3-#')
         return self.skip_connection(x) + h
 
     def forward(self, x, emb):
@@ -308,11 +318,10 @@ class GAttentionBlock(nn.Module):
         channels,
         g_equiv=False,
         g_input=None,
-        g_output=None,
         num_heads=1,
         num_head_channels=-1,
         use_checkpoint=False,
-        attention_type="123", # Default value is "flash"
+        attention_type="reg", # Default value is "flash" all other values default to regular
         encoder_channels=None,
         dims=2,
         channels_last=False,
@@ -320,17 +329,21 @@ class GAttentionBlock(nn.Module):
     ):
         super().__init__()
 
+        self.g_equiv = g_equiv or False
+        self.g_input = g_input or None
+
         # Detect input group and scale number of channels based on corresponding scaling factor
         # See 'equivariant_layers.py' for the origin of these values.
-        if g_equiv == True:
-            if g_input == 'D4':
-                channels = int(channels*8)
-            elif g_input == 'C4':
-                channels = int(channels*4)
-            elif g_input == 'Z2':
-                channels = int(channels*1)
+        nti = 1
+        if self.g_equiv:
+            if self.g_input == 'Z2':
+                nti = 1
+            elif self.g_input == 'C4':
+                nti = 4
+            elif self.g_input == 'D4':
+                nti = 8
             else:
-                raise ValueError(f"unsupported g_input in GResBlock(): {g_input}")
+                raise ValueError(f"unsupported g_input in GAttentionBlcok(): {g_input}")
 
         self.channels = channels
         if num_head_channels == -1:
@@ -342,7 +355,7 @@ class GAttentionBlock(nn.Module):
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
-        self.qkv = gconv_nd(dims, g_equiv, g_input, g_output, channels, channels * 3, 1)
+        self.qkv = gconv_nd(dims, g_equiv, g_input, g_input, channels, 3*channels, 1)
         self.attention_type = attention_type
         if attention_type == "flash":
             self.attention = QKVFlashAttention(channels, self.num_heads)
@@ -355,8 +368,8 @@ class GAttentionBlock(nn.Module):
         )
         if encoder_channels is not None:
             assert attention_type != "flash"
-            self.encoder_kv = gconv_nd(1, encoder_channels, channels * 2, 1) # TODO - Implement 1D group equivariant convolution 
-        self.proj_out = zero_module(gconv_nd(dims, g_equiv, g_input, g_output, channels, channels, 1))
+            self.encoder_kv = gconv_nd(1, g_equiv=False, in_channels=encoder_channels, out_channels=2*channels, kernel_size=1) # TODO - Implement 1D group equivariant convolution 
+        self.proj_out = zero_module(gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_input, in_channels=channels, out_channels=channels, kernel_size=1))
 
     def forward(self, x, encoder_out=None):
         if encoder_out is None:
