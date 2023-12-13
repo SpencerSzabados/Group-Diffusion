@@ -19,7 +19,7 @@ def cm_train_defaults():
         training_mode="consistency_distillation",
         target_ema_mode="fixed",
         scale_mode="fixed",
-        total_training_steps=600000,
+        total_training_steps=100000,
         start_ema=0.0,
         start_scales=40,
         end_scales=40,
