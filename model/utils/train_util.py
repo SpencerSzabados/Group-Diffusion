@@ -73,7 +73,7 @@ class TrainLoop:
 
         self.sync_cuda = th.cuda.is_available()
 
-        self._load_and_sync_parameters()
+        # self._load_and_sync_parameters()
         self.mp_trainer = MixedPrecisionTrainer(
             model=self.model,
             use_fp16=self.use_fp16,
@@ -95,7 +95,7 @@ class TrainLoop:
                 copy.deepcopy(self.mp_trainer.master_params)
                 for _ in range(len(self.ema_rate))
             ]
-
+            
         if th.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
@@ -114,7 +114,6 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
-
         self.step = self.resume_step
 
     def _load_and_sync_parameters(self):
@@ -626,7 +625,6 @@ def find_resume_checkpoint_aux(ckpt_dir):
         logger.warn(f'CANNOT FIND: {ckpt_dir}')
         return None
 
-
     last_resume_step = -1
 
     for filename in os.listdir(ckpt_dir):
@@ -640,7 +638,6 @@ def find_resume_checkpoint_aux(ckpt_dir):
     else:
         last_resume_step = str(last_resume_step).zfill(6)
         return os.path.join(ckpt_dir, f'model{last_resume_step}.pt')
-
 
 
 def find_ema_checkpoint(main_checkpoint, step, rate):

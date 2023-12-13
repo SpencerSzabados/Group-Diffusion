@@ -4,8 +4,13 @@
 ######################################################################################
 # Testing code 
 ######################################################################################
-python edm_train.py --g_equiv True --g_input Z2 --g_output C4 --attention_resolutions 32,16,8 --class_cond True --use_scale_shift_norm False --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 10 --image_size 28 --lr 0.0001 --num_channels 32 --num_head_channels 16 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --data_dir /home/datasets/mnist
+# Train model on c2 group images 
+OPENAI_LOGDIR=/home/datasets/logs/ python edm_train.py --g_equiv True --g_input Z2 --g_output C4 --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm False --dropout 0.0 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 100 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --data_dir /home/datasets/c4images
 
+######################################################################################
+# Sampling code 
+######################################################################################
+OPENAI_LOGDIR=/home/datasets/samples/ python image_sample.py --training_mode edm --g_equiv True --g_input Z2 --g_output C4 --batch_size 10 --sigma_max 80 --sigma_min 0.002 --s_churn 0 --steps 40 --sampler heun --model_path /home/datasets/logs/model004500.pt --attention_resolutions 32,16,8  --class_cond False --dropout 0.0 --image_size 28 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --num_samples 10 --resblock_updown True --use_fp16 False --use_scale_shift_norm False --weight_schedule karras
 
 ######################################################################################
 # Training group equivariant EDM models on class-conditional Rot-MNIST

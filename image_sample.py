@@ -7,19 +7,19 @@ import argparse
 import os
 
 import numpy as np
-from model.model_modules.utils import distribute_util
+from model.utils import distribute_util
 import torch as th
 import torch.distributed as dist
 
 from model import logger
-from model.script_util import (
+from model.utils.script_util import (
     NUM_CLASSES,
     model_and_diffusion_defaults,
     create_model_and_diffusion,
     add_dict_to_argparser,
     args_to_dict,
 )
-from model.random_util import get_generator
+from model.utils.random_util import get_generator
 from model.karras_diffusion import karras_sample
 
 
@@ -119,6 +119,9 @@ def main():
 
 def create_argparser():
     defaults = dict(
+        g_equiv=False,
+        g_input=None,
+        g_output=None,
         training_mode="edm",
         generator="determ",
         clip_denoised=True,
