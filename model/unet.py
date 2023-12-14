@@ -5,15 +5,13 @@
     Implementation is a modified version of the Consistency Model from (https://github.com/openai/consistency_models)
 """
 
-
 from abc import abstractmethod
 
 import math
-
-import numpy as np
 import torch as th
-import torch.nn as nn
-import torch.nn.functional as F
+from pathlib import Path
+from functools import partial
+from multiprocessing import cpu_count
 
 from .utils.fp16_util import convert_module_to_f16, convert_module_to_f32
 from .utils.nn import (
@@ -28,6 +26,8 @@ from .utils.nn import (
 from .model_modules.equivariant_layers import *
 from .model_modules.equivariant_blocks import *
 
+
+### ---[ Consistency model unet ]----------------
 class UNetModel(nn.Module):
     """
     The full group equivariant UNet model with attention and timestep embedding.
@@ -307,10 +307,10 @@ class UNetModel(nn.Module):
         """
         Apply the model to an input batch.
 
-        :param x: an [N x C x ...] Tensor of inputs.
+        :param x: an [N, C, H, W] Tensor of inputs.
         :param timesteps: a 1-D batch of timesteps.
         :param y: an [N] Tensor of labels, if class-conditional.
-        :return: an [N x C x ...] Tensor of outputs.
+        :return: an [N, C, H, W] Tensor of outputs.
         """
         assert (y is not None) == (
             self.num_classes is not None
@@ -322,25 +322,6 @@ class UNetModel(nn.Module):
         if self.num_classes is not None:
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y) 
-
-        # DEBUG
-        # Print structure of network 
-        # print('#'*20+" INPUT ")
-        # t = x.type(self.dtype)
-        # ts = []
-        # for idx, module in enumerate(self.input_blocks):
-        #     print('='*10 + str(idx) + '='*10)
-
-        #     print(module, flush=True)
-        # print('#'*20+" MIDDLE ")
-        # for module in self.middle_block:
-        #     print('='*10)
-        #     print(module, flush=True)
-        #         # DEBUG
-        # print('#'*20+" OUTPUT ")
-        # for module in self.output_blocks:
-        #     print('='*10)
-        #     print(module, flush=True)
 
         h = x.type(self.dtype)
         for idx, module in enumerate(self.input_blocks):
@@ -356,3 +337,4 @@ class UNetModel(nn.Module):
         h = h.type(x.dtype)
         return self.out(h)
     
+

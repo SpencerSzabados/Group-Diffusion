@@ -1,6 +1,6 @@
 """
     File contains all network layers, and network block, definition used in the 
-    construction of the standard diffusion unet architecture.
+    construction of the consitency diffusion unet architecture.
 """
 
 
@@ -21,7 +21,6 @@ from ..utils.nn import (
     normalization,
     timestep_embedding,
 )
-
 
 class AttentionPool2d(nn.Module):
     """
@@ -354,11 +353,9 @@ class QKVFlashAttention(nn.Module):
         self.num_heads = num_heads
         self.causal = causal
 
-        assert (
-            self.embed_dim % num_heads == 0
-        ), "self.kdim must be divisible by num_heads"
+        assert (self.embed_dim % num_heads == 0), "self.kdim must be divisible by num_heads"
         self.head_dim = self.embed_dim // num_heads
-        assert self.head_dim in [16, 32, 64], "Only support head_dim == 16, 32, or 64"
+        assert (self.head_dim in [16, 32, 64]), "Only support head_dim == 16, 32, or 64"
 
         self.inner_attn = FlashAttention(
             attention_dropout=attention_dropout, **factory_kwargs

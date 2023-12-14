@@ -22,6 +22,9 @@ import os
 def create_argparser():
     defaults = dict(
         data_dir="",
+        g_equiv=False,
+        g_input=None,
+        g_output=None,
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,

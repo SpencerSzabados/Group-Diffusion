@@ -32,102 +32,82 @@ from groupy.gconv.make_gconv_indices import make_c4_z2_indices, make_c4_p4_indic
 from groupy.gconv.pytorch_gconv.pooling import plane_group_spatial_max_pooling
 
 
-### ---[ Transformation layers ]-----------------
-
-class GUpsample(nn.Module):
-    """
-    An upsampling layer with an optional convolution.
-
-    :param channels: channels in the inputs and outputs.
-    :param use_conv: a bool determining if a convolution is applied.
-    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
-                 upsampling occurs in the inner-two dimensions.
-    """
-
-    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
-        super().__init__()
-        self.channels = channels
-        self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-        self.g_input = g_input
-        self.g_output = g_input
-        self.dims = dims
-
-        assert use_conv == True or use_conv == False
-        assert isinstance(g_input, str)
-
-        if use_conv:
-            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, padding=1)
-
-    def forward(self, x):
-        assert x.shape[1] == self.channels
-        if self.dims == 3:
-            x = F.interpolate(
-                x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
-            )
-        else:
-            x = F.interpolate(x, scale_factor=2, mode="nearest")
-        if self.use_conv:
-            x = self.conv(x)
-        return x
-
-
-class GDownsample(nn.Module):
-    """
-    A downsampling layer with an optional convolution.
-
-    :param channels: channels in the inputs and outputs.
-    :param use_conv: a bool determining if a convolution is applied.
-    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
-                 downsampling occurs in the inner-two dimensions.
-    """
-
-    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
-        super().__init__()
-        self.channels = channels
-        self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-        self.g_equiv = g_equiv
-        self.g_input = g_input
-        self.g_output = g_input
-        self.dims = dims
-
-        assert use_conv == True or use_conv == False
-        assert isinstance(g_input, str)
-
-        stride = 2 if dims != 3 else (1, 2, 2)
-        if use_conv:
-            self.op = gconv_nd(dims=self.dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, stride=stride, padding=1)
-        else:
-            assert self.channels == self.out_channels
-            self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
-
-    def forward(self, x):
-        assert x.shape[1] == self.channels, f' {x.shape[1]} || {self.channels}'
-        return self.op(x)
-
-# ---[ Equivariant transformations ]-------------
+# ---[ Symetrize operator blocks ]---------------
 """
-    These layers implement group equivariant operations under the Special Euclidean group
-    SE(2), which in general SE(n) is homeomorphic to R^n X SO(n) where SO(n) is the 
-    Special Orthogonal group. The cyclic groups C_n are subgroups of SO(2). 
-
-    The FiLM layers are extentions of those provided in (https://github.com/caffeinism/FiLM-pytorch)
+    As discussed in "Structure Preserving GANs by Birrell et.al. (2022)"
+    objectives (e.g., probability distributions on images) can be symmetrized, 
+    that is, reduced to a set of equivalance classes induced by desired group symmetry
+    properties. The following blocks implement operations that gauarantee this behaviour.
 """
+
+# ---[ ]
+
+class GSymmetrize(nn.Module):
+    """
+    Layer symmetrizes input features based on specified group action so that the resulting output
+    lies within the support of the probability distribution under the specified group.
+
+    :param x: Input feature vector 
+    :param g_input: One of {Z2, C4, D4} as supported by GrouPy.
+
+    TODO: Currently this only supports C4 and will not generalize to non-rotation groups easily.
+    """
+
+    def __init__(self, x, g_output):
+        """
+        :param x: Input feature vector of shape [N,C,H,W]
+        :param g_output: One of {Z2, C4, D4} group action as specified in GrouPy.
+            g_output is used to genearte a set of vector permutations to symmetrize x.
+        :self actions: Random integers sampled from [N, {0,1,2,3}]
+        """
+
+        super(GSymmetrize, self).__init__()
+
+        self.shape = x.shape
+        self.nti = 1
+
+        if g_output == 'Z2':
+            self.nti = 1
+        elif g_output == 'H2' or g_output == 'V2':
+            self.nti = 2
+        elif g_output == 'C4':
+            self.nti = 4
+        elif g_output == 'D4':
+            self.nti = 8
+        else:
+            raise ValueError(f"unsupported g_input in Symetrize __init__(): {self.g_input}")
+        
+        y = pt.zeros_like(x)
+
 
 
 ### ---[ Group equivariant convolutions ]--------
 """
     Implementation of the equivariant convoltional layers is based on that in
     "Structure Preserving GANs by Birrell et.al. (2022)".
+
+    This is based on the implemention given by Adam Bielski from:
+    (https://github.com/adambielski/GrouPy/blob/master/groupy/gconv/pytorch_gconv/splitgconv2d.py),
+    however, formatting was changed to minimic the style of:
+    (https://github.com/basveeling/keras-gcnn/blob/master/keras_gcnn/layers/convolutional.py#L114)
 """
 
 class SplitGConv2D(nn.Module):
     """
-    This class is based on the implemention given by Adam Bielski from:
-    (https://github.com/adambielski/GrouPy/blob/master/groupy/gconv/pytorch_gconv/splitgconv2d.py),
-    however, formatting was changed to minimic the style of:
-    (https://github.com/basveeling/keras-gcnn/blob/master/keras_gcnn/layers/convolutional.py#L114)
+    Group equivariant convolution layer.
+    
+    :parm g_input: One of ('Z2', 'C4', 'D4'). Use 'Z2' for the first layer. Use 'C4' or 'D4' for later layers.
+        The paramter value 'Z2' specifies the data being convoled is from the Z^2 plane (discrete mesh).
+    :parm g_output: One of ('C4', 'D4'). What kind of transformations to use (rotations or roto-reflections).
+        The value of g_input of the subsequent layer should match the value of g_outupt from the previous.
+    :parm in_channels: The number of input channels. Based on the input group action the number of channels 
+        used is equal to nti*in_channels.
+    :parm out_channels: The number of output channels. Based on the output group action the number of channels
+        used is equal to nto*out_channels.
+
+    Note: [2023-12-13] currently SplitGConv2D perform average pooling over all the group acitons before
+        returning. In order to match up the number of channels between layers the number of in channels 
+        scaled as in_channels//nti.
     """
 
     def __init__(self, 
@@ -245,6 +225,7 @@ class SplitGConv2D(nn.Module):
 
         return y
 
+
 class GConv2D(SplitGConv2D):
     """
     
@@ -339,19 +320,86 @@ class GAvgPool2D(nn.Module):
 #  nn.AvgPool2d supplies this functionality (https://discuss.pytorch.org/t/global-average-pooling-in-pytorch/6721).
 
 
-# ---[ Symetrize operator blocks ]---------------
-"""
-    As discussed in "Structure Preserving GANs by Birrell et.al. (2022)"
-    objectives (e.g., probability distributions on images) can be symmetrized, 
-    that is, reduced to a set of equivalance classes induced by desired group symmetry
-    properties. The following blocks implement operations that gauarantee this behaviour.
-"""
+### ---[ Transformation layers ]-----------------
 
-# ---[ ]
+class GUpsample(nn.Module):
+    """
+    An upsampling layer with an optional convolution.
 
-def symmetrize_block(features, num_filters, kerenl_size, h_):
+    :param channels: channels in the inputs and outputs.
+    :param use_conv: a bool determining if a convolution is applied.
+    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
+                 upsampling occurs in the inner-two dimensions.
     """
-    TODO - Implement symmetrization block that averages over all orientations of group actions and
-           returns unscaled number of channels opposed to a multiple of the input channels as done
-           by GrouPy.
+
+    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
+        super().__init__()
+        self.channels = channels
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+        self.g_input = g_input
+        self.g_output = g_input
+        self.dims = dims
+
+        assert use_conv == True or use_conv == False
+        assert isinstance(g_input, str)
+
+        if use_conv:
+            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        assert x.shape[1] == self.channels
+        if self.dims == 3:
+            x = F.interpolate(
+                x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
+            )
+        else:
+            x = F.interpolate(x, scale_factor=2, mode="nearest")
+        if self.use_conv:
+            x = self.conv(x)
+        return x
+
+
+class GDownsample(nn.Module):
     """
+    A downsampling layer with an optional convolution.
+
+    :param channels: channels in the inputs and outputs.
+    :param use_conv: a bool determining if a convolution is applied.
+    :param dims: determines if the signal is 1D, 2D, or 3D. If 3D, then
+                 downsampling occurs in the inner-two dimensions.
+    """
+
+    def __init__(self, channels, use_conv=False, g_equiv=False, g_input=None, dims=2, out_channels=None):
+        super().__init__()
+        self.channels = channels
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+        self.g_equiv = g_equiv
+        self.g_input = g_input
+        self.g_output = g_input
+        self.dims = dims
+
+        assert use_conv == True or use_conv == False
+        assert isinstance(g_input, str)
+
+        stride = 2 if dims != 3 else (1, 2, 2)
+        if use_conv:
+            self.op = gconv_nd(dims=self.dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, stride=stride, padding=1)
+        else:
+            assert self.channels == self.out_channels
+            self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
+
+    def forward(self, x):
+        assert x.shape[1] == self.channels, f' {x.shape[1]} || {self.channels}'
+        return self.op(x)
+    
+
+# ---[ Equivariant transformations ]-------------
+"""
+    These layers implement group equivariant operations under the Special Euclidean group
+    SE(2), which in general SE(n) is homeomorphic to R^n X SO(n) where SO(n) is the 
+    Special Orthogonal group. The cyclic groups C_n are subgroups of SO(2). 
+
+    The FiLM layers are extentions of those provided in (https://github.com/caffeinism/FiLM-pytorch)
+"""

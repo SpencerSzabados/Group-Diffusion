@@ -348,7 +348,6 @@ class KarrasDenoiser:
 
     def denoise(self, model, x_t, sigmas, **model_kwargs):
         import torch.distributed as dist
-
         if not self.distillation:
             c_skip, c_out, c_in = [
                 append_dims(x, x_t.ndim) for x in self.get_scalings(sigmas)
@@ -358,8 +357,10 @@ class KarrasDenoiser:
                 append_dims(x, x_t.ndim)
                 for x in self.get_scalings_for_boundary_condition(sigmas)
             ]
+
         rescaled_t = 1000 * 0.25 * th.log(sigmas + 1e-44)
         model_output = model(c_in * x_t, rescaled_t, **model_kwargs)
+        
         denoised = c_out * model_output + c_skip * x_t
         return model_output, denoised
 

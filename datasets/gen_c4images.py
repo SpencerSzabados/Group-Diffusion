@@ -1,6 +1,8 @@
 """
     Script for generating C4 group binary image dataset to test if generator can learn to generate mirror images of what is 
     present in dataset.
+
+    TODO: Currently this only generates an image with on channel but should have 3.
 """
 
 import numpy as np

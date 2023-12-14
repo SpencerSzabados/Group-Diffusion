@@ -45,7 +45,7 @@ def P4_symmetrize(feat, rot_angles):
     for k in tf.range(4):
         idx = (rot_angles == k)
         idx = tf.cast(idx, dtype=tf.float32)
-        idx = tf.reshape(idx, [-1,1, 1, 1])
+        idx = tf.reshape(idx, [-1,1,1,1])
         out = out + tf.image.rot90(feat*idx, k=k)
 
     return out
