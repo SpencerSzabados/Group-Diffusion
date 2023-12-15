@@ -244,6 +244,9 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             if g_input == 'Z2' and g_output == 'Z2':
                 return nn.Conv2d(*args, **kwargs)
             else:
+                print("equivariant_layers gequiv: "+str(g_equiv))
+                print(g_input)
+                print(g_output)
                 return GConv2D(g_input, g_output, *args, **kwargs)
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
     elif g_equiv == False:
