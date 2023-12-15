@@ -309,7 +309,7 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
 
                 if g_output == 'C4':
                     layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())   
+                    parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric())   
 
                 return layer
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
@@ -412,7 +412,7 @@ class GUpsample(nn.Module):
         assert isinstance(g_input, str)
 
         if use_conv:
-            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, padding=1)
+            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=5, padding=2)
 
     def forward(self, x):
         assert x.shape[1] == self.channels

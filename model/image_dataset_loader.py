@@ -16,7 +16,7 @@ def load_data(
     class_cond=False,
     deterministic=False,
     random_crop=False,
-    random_flip=True,
+    random_flip=False,
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -36,6 +36,10 @@ def load_data(
     :param random_crop: if True, randomly crop the images for augmentation.
     :param random_flip: if True, randomly flip the images for augmentation.
     """
+
+
+
+    
     if not data_dir:
         raise ValueError("unspecified data directory")
     all_files = _list_image_files_recursively(data_dir)

@@ -122,7 +122,7 @@ class UNetModel(nn.Module):
 
         ch = input_ch = int(channel_mult[0] * model_channels) # Number in_channels in first ResBlock after time embedding
         self.input_blocks = nn.ModuleList(
-            [TimestepEmbedSequential(gconv_nd(dims, g_equiv=True, g_input=self.g_input, g_output=self.g_output, in_channels=in_channels, out_channels=ch, kernel_size=3, padding=1))]
+            [TimestepEmbedSequential(gconv_nd(dims, g_equiv=True, g_input=self.g_input, g_output=self.g_output, in_channels=in_channels, out_channels=ch, kernel_size=5, padding=2))]
         )
         #self.input_blocks.append(TimestepEmbedSequential(gconv_nd(dims, g_equiv=True, g_input=self.g_input, g_output=self.g_output,  in_channels=ch, out_channels=ch, kernel_size=3, padding=1)))
         self._feature_size = ch
@@ -284,7 +284,7 @@ class UNetModel(nn.Module):
         self.out = nn.Sequential(
             normalization(ch),
             nn.SiLU(),
-            zero_module(gconv_nd(dims, self.g_equiv, self.g_output, self.g_output, input_ch, out_channels, kernel_size=3, padding=1)),
+            zero_module(gconv_nd(dims, self.g_equiv, self.g_output, self.g_output, input_ch, out_channels, kernel_size=5, padding=2)),
         )
 
     def convert_to_fp16(self):
