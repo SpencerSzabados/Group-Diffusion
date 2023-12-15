@@ -37,9 +37,6 @@ def load_data(
     :param random_flip: if True, randomly flip the images for augmentation.
     """
 
-
-
-    
     if not data_dir:
         raise ValueError("unspecified data directory")
     all_files = _list_image_files_recursively(data_dir)

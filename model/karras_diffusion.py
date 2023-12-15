@@ -106,7 +106,6 @@ class KarrasDenoiser:
         return terms
     
 
-    
     def consistency_losses(
         self,
         model,
@@ -337,8 +336,6 @@ class KarrasDenoiser:
         return terms
 
     def denoise(self, model, x_t, sigmas, **model_kwargs):
-
-        # print(x_t.min(), x_t.max())
         import torch.distributed as dist
         if not self.distillation:
             c_skip, c_out, c_in = [
@@ -353,21 +350,6 @@ class KarrasDenoiser:
         rescaled_t = 1000 * 0.25 * th.log(sigmas + 1e-44)
 
         model_output = model(c_in * x_t, rescaled_t, **model_kwargs)
-
-        # def g_op(x):
-        #     return th.rot90(x, 1, dims = [-1, -2])
-
-
-        # def g_op(x):
-        #     return th.flip(x, dims=[-1])
-
-        # x_t_rot90 = g_op(x_t)
-        # model_output_rot90 = model(c_in * x_t_rot90, rescaled_t, **model_kwargs)
-        # print('eqv:', th.abs(model_output_rot90 - g_op(model_output_org)).mean())
-
-        # print(model_output_org[1, :, :5, :5])
-
-        # model_output = model_output_org
        
         denoised = c_out * model_output + c_skip * x_t
         return model_output, denoised
@@ -432,7 +414,7 @@ def karras_sample(
 
         return denoised
     
-
+    # TODO: What does this code do?
     x_0 = sample_fn(
         denoiser,
         x_T,
@@ -458,12 +440,6 @@ def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0, device="cpu"):
 def to_d(x, sigma, denoised):
     """Converts a denoiser output to a Karras ODE derivative."""
     return (x - denoised) / append_dims(sigma, x.ndim)
-
-# def to_d(x, sigma, denoised):
-#     """Converts a denoiser output to a Karras ODE derivative."""
-#     # return (x - denoised) / append_dims(sigma, x.ndim)
-
-#     return  denoised / append_dims(sigma, x.ndim)
 
 
 def get_ancestral_step(sigma_from, sigma_to):
@@ -618,7 +594,6 @@ def sample_euler(
             )
         dt = sigmas[i + 1] - sigma
         x = x + d * dt
-        # x = th.clamp(x, min=-1, max=1)
 
     return x
 

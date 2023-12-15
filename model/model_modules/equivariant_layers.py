@@ -44,6 +44,15 @@ class Vertical_Symmetric(nn.Module):
         return X * self.upper_mask + th.flip(X, dims=[-2]) * (1 - self.upper_mask)
     
 
+
+# ---[ Symetrize operator blocks ]---------------
+"""
+    As discussed in "Structure Preserving GANs by Birrell et.al. (2022)"
+    objectives (e.g., probability distributions on images) can be symmetrized, 
+    that is, reduced to a set of equivalance classes induced by desired group symmetry
+    properties. The following blocks implement operations that gauarantee this behaviour.
+"""
+
 class Horizontal_Symmetric(nn.Module):
     def forward(self, X):
         _, _, h, w = X.shape
@@ -86,18 +95,6 @@ class C4_Symmetric(nn.Module):
                 X__ = th.rot90(X * self.up_left_mask.to(X.device), 1, [-1, -2]) if X__ is None else th.rot90(X__, 1, [-1, -2])
                 X_ = X_ + X__
             return X_
-        
-
-
-
-
-# ---[ Symetrize operator blocks ]---------------
-"""
-    As discussed in "Structure Preserving GANs by Birrell et.al. (2022)"
-    objectives (e.g., probability distributions on images) can be symmetrized, 
-    that is, reduced to a set of equivalance classes induced by desired group symmetry
-    properties. The following blocks implement operations that gauarantee this behaviour.
-"""
 
 # ---[ ]
 
@@ -109,6 +106,7 @@ class GSymmetrize(nn.Module):
     :param x: Input feature vector 
     :param g_input: One of {Z2, C4, D4} as supported by GrouPy.
 
+    TODO: Finish the implementation of this layer and call the above operations 
     TODO: Currently this only supports C4 and will not generalize to non-rotation groups easily.
     """
 
@@ -287,7 +285,7 @@ class SplitGConv2D(nn.Module):
 
 class GConv2D(SplitGConv2D):
     """
-    
+    Wrapper function for group equivariant layers.
     """
     def __init__(self, g_input, g_output, *args, **kwargs):
         super(GConv2D, self).__init__(g_input, g_output, *args, **kwargs)
@@ -303,23 +301,22 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             if g_input == 'Z2' and g_output == 'Z2':
                 return nn.Conv2d(*args, **kwargs)
             else:
-                print("equivariant_layers gequiv: "+str(g_equiv))
-                print(g_input)
-                print(g_output)
-
                 if g_output == 'H':
                     layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric())   
-                if g_output == 'V':
+                    parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric()) 
+                    return layer  
+                elif g_output == 'V':
                     layer = nn.Conv2d(*args, **kwargs)
                     parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
-                if g_output == 'C4':
-                    layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())   
-                
-
-                return layer
-        raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
+                    return layer
+                # DEBUG - removed this call to test GConv2d with new dataloader
+                # elif g_output == 'C4':
+                #     layer = nn.Conv2d(*args, **kwargs)
+                #     parametrize.register_parametrization(layer, "weight", C4_Symmetric())  
+                    return layer 
+                else:
+                    return GConv2D(g_input, g_output, *args, **kwargs)
+        raise ValueError(f"unsupported number of dimensions for equivariant in gconv_nd: {dims}")
     elif g_equiv == False:
         if dims == 1:
             return nn.Conv1d(*args, **kwargs)

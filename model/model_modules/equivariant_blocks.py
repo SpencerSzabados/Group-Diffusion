@@ -152,24 +152,8 @@ class GResBlock(TimestepBlock):
             h = self.h_upd(h)
             x = self.x_upd(x)
             h = in_conv(h)
-        else:
-            
+        else: 
             h = self.in_layers(x)
-
-            # h_rot90 = self.in_layers[-1](pt.rot90(x, 1, dims = [-1, -2]))
-
-            # h = x
-
-            # h_rot90 = pt.rot90(x, 1, dims = [-1, -2])
-
-
-        #     print('eqv:', pt.abs(h_rot90 - pt.rot90(h, 1, dims=[-1,-2])).max())
-
-        # exit()
-
-
-
-
 
         emb_out = self.emb_layers(emb).type(h.dtype)
         while len(emb_out.shape) < len(h.shape):

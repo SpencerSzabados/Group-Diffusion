@@ -182,13 +182,14 @@ class TrainLoop:
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
                 
-
-    
+                # Code for performing incremental image sampling during training.
+                # TODO: Make this function more general and accept model paramters during sampling 
+                #       rather than the hard coded values used currently.
                 generator = get_generator('determ', 64, 42)
                 sample = karras_sample(
                     self.diffusion,
                     self.model,
-                    (64, 3, 28, 28),
+                    (64, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
                     steps=100,
                     model_kwargs={},
                     device=distribute_util.dev(),
