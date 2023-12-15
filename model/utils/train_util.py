@@ -7,12 +7,15 @@ import torch as th
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import RAdam
-
+import torchvision
 from . import distribute_util
 from .. import logger
 from .fp16_util import MixedPrecisionTrainer
 from .nn import update_ema
 from ..resample import LossAwareSampler, UniformSampler
+
+from ..karras_diffusion import karras_sample
+from .random_util import get_generator
 
 from .fp16_util import (
     get_param_groups_and_shapes,
@@ -178,6 +181,35 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
+                
+
+    
+                generator = get_generator('determ', 64, 42)
+                sample = karras_sample(
+                    self.diffusion,
+                    self.model,
+                    (64, 3, 28, 28),
+                    steps=100,
+                    model_kwargs={},
+                    device=distribute_util.dev(),
+                    clip_denoised=True,
+                    sampler='euler',
+                    sigma_min=0.002,
+                    sigma_max=40.0,
+                    s_churn=0.0,
+                    s_tmin=0.0,
+                    s_tmax=float("inf"),
+                    s_noise=1.0,
+                    generator=generator,
+                    ts="",
+                )
+
+                print(sample.shape)
+                grid_img = torchvision.utils.make_grid(sample, nrow = 8, normalize = True)
+                torchvision.utils.save_image(grid_img, f'tmp_imgs/{self.step}.pdf')
+
+
+                
 
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()

@@ -430,9 +430,6 @@ def karras_sample(
         if clip_denoised:
             denoised = denoised.clamp(-1, 1)
 
-        # if clip_denoised:
-        #     model_output = model_output.clamp(-1, 1)
-
         return denoised
     
 
@@ -458,15 +455,15 @@ def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0, device="cpu"):
     return append_zero(sigmas).to(device)
 
 
-# def to_d(x, sigma, denoised):
-#     """Converts a denoiser output to a Karras ODE derivative."""
-#     return (x - denoised) / append_dims(sigma, x.ndim)
-
 def to_d(x, sigma, denoised):
     """Converts a denoiser output to a Karras ODE derivative."""
-    # return (x - denoised) / append_dims(sigma, x.ndim)
+    return (x - denoised) / append_dims(sigma, x.ndim)
 
-    return  denoised / append_dims(sigma, x.ndim)
+# def to_d(x, sigma, denoised):
+#     """Converts a denoiser output to a Karras ODE derivative."""
+#     # return (x - denoised) / append_dims(sigma, x.ndim)
+
+#     return  denoised / append_dims(sigma, x.ndim)
 
 
 def get_ancestral_step(sigma_from, sigma_to):
