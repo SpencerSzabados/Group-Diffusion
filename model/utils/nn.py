@@ -71,8 +71,8 @@ def zero_module(module):
     """
     Zero out the parameters of a module and return it.
     """
-    for p in module.parameters():
-        p.detach().zero_()
+    # for p in module.parameters():
+    #     p.detach().zero_()
     return module
 
 
@@ -148,6 +148,7 @@ def checkpoint(func, inputs, params, flag):
                    explicitly take as arguments.
     :param flag: if False, disable gradient checkpointing.
     """
+    flag= False
     if flag:
         args = tuple(inputs) + tuple(params)
         return CheckpointFunction.apply(func, len(inputs), *args)

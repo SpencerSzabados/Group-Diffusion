@@ -35,10 +35,19 @@ def main():
         distillation = False
 
     logger.log("creating model and diffusion...")
+
+    print(args)
+
+
+    
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys()),
         distillation=distillation,
     )
+
+    # print(args_to_dict(args, model_and_diffusion_defaults().keys()))
+    # print(model)
+    # exit()
     model.load_state_dict(
         distribute_util.load_state_dict(args.model_path, map_location="cpu")
     )

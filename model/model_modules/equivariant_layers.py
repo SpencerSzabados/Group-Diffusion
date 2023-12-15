@@ -11,11 +11,13 @@ import os
 import math
 import numpy as np
 import torch as pt
+import torch as th
 import torch.nn as nn
 # from torch.nn.modules.utils import ut
 from torch.nn import Parameter
 import torch.nn.functional as F
 from torch.nn.modules.utils import _pair
+import torch.nn.utils.parametrize as parametrize
 # 
 from .. import logger
 #
@@ -30,6 +32,63 @@ from ..utils.nn import (
 # Libraries for group convolutional layers
 from groupy.gconv.make_gconv_indices import make_c4_z2_indices, make_c4_p4_indices, make_d4_z2_indices, make_d4_p4m_indices
 from groupy.gconv.pytorch_gconv.pooling import plane_group_spatial_max_pooling
+
+
+class Vertical_Symmetric(nn.Module):
+    def forward(self, X):
+        _, _, h, w = X.shape
+        upper_channel = h//2
+        if not hasattr(self, 'upper_mask'):
+            self.upper_mask = nn.Parameter(th.tensor([1.0]* upper_channel + [0.0] * (h - upper_channel), device = X.device)[None, None, :, None], requires_grad = False)
+
+        return X * self.upper_mask + th.flip(X, dims=[-2]) * (1 - self.upper_mask)
+    
+
+class Horizontal_Symmetric(nn.Module):
+    def forward(self, X):
+        _, _, h, w = X.shape
+        left_channel = w//2
+        if not hasattr(self, 'left_mask'):
+            self.left_mask = nn.Parameter(th.tensor([1.0]* left_channel + [0.0] * (w - left_channel), device = X.device)[None, None, None, :], requires_grad = False)
+        return X * self.left_mask + th.flip(X, dims=[-1]) * (1 - self.left_mask)
+
+class C4_Symmetric(nn.Module):
+    def forward(self, X):
+        _, _, h, w = X.shape
+        assert h == w, 'the initialization assumes h == w'
+        upper_channel = h//2
+        if h % 2 == 0:
+            
+            if not hasattr(self, 'up_left_mask'):
+                tmp_ = th.tensor([[1]*upper_channel + [0] * ( h - upper_channel)], device = X.device)
+                self.up_left_mask = nn.Parameter((tmp_.T @ tmp_)[None, None, :, :], requires_grad = False)
+            
+            X_ = X * self.up_left_mask
+            X__ = None
+            for rot_ in range(3):
+                X__ = th.rot90(X_, 1, [-1, -2]) if X__ is None else  th.rot90(X__, 1, [-1, -2])
+                X_ = X_ + X__
+            return X_
+        else:
+            if not hasattr(self, 'up_left_mask'):
+                tmp_A = th.tensor([[1.0]*upper_channel + [0.0] * ( h - upper_channel)], device = X.device)
+                tmp_B = th.tensor([[1.0]*(upper_channel + 1) + [0.0] * ( h - (upper_channel + 1))], device = X.device)
+                self.up_left_mask = nn.Parameter((tmp_A.T @ tmp_B)[None, None, :, :], requires_grad=False)
+
+            if not hasattr(self, 'center_elem_mask'):
+                center_elem_mask = th.zeros(h, w, device = X.device)
+                center_elem_mask[h//2, h//2] = 1.0
+                self.center_elem_mask = nn.Parameter(center_elem_mask, requires_grad=False )
+
+            X_ = X * self.center_elem_mask.to(X.device)
+            X__ = None
+            for rot_ in range(4):
+                X__ = th.rot90(X * self.up_left_mask.to(X.device), 1, [-1, -2]) if X__ is None else th.rot90(X__, 1, [-1, -2])
+                X_ = X_ + X__
+            return X_
+        
+
+
 
 
 # ---[ Symetrize operator blocks ]---------------
@@ -244,7 +303,22 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             if g_input == 'Z2' and g_output == 'Z2':
                 return nn.Conv2d(*args, **kwargs)
             else:
-                return GConv2D(g_input, g_output, *args, **kwargs)
+                print("equivariant_layers gequiv: "+str(g_equiv))
+                print(g_input)
+                print(g_output)
+
+                if g_output == 'H':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric())   
+                if g_output == 'V':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
+                if g_output == 'C4':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())   
+                
+
+                return layer
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
     elif g_equiv == False:
         if dims == 1:
@@ -345,7 +419,7 @@ class GUpsample(nn.Module):
         assert isinstance(g_input, str)
 
         if use_conv:
-            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=3, padding=1)
+            self.conv = gconv_nd(dims, g_equiv=g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=self.channels, out_channels=self.out_channels, kernel_size=5, padding=2)
 
     def forward(self, x):
         assert x.shape[1] == self.channels
