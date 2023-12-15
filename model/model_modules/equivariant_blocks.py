@@ -87,6 +87,8 @@ class GResBlock(TimestepBlock):
         if self.g_equiv:
             if self.g_input == 'Z2':
                 nti = 1
+            elif self.g_input == 'H' or self.g_input == 'V':
+                nti = 2
             elif self.g_input == 'C4':
                 nti = 4
             elif self.g_input == 'D4':
@@ -344,6 +346,8 @@ class GAttentionBlock(nn.Module):
         if self.g_equiv:
             if self.g_input == 'Z2':
                 nti = 1
+            elif self.g_input == 'H' or self.g_input == 'V':
+                nti = 2
             elif self.g_input == 'C4':
                 nti = 4
             elif self.g_input == 'D4':

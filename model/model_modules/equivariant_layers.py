@@ -307,9 +307,16 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
                 print(g_input)
                 print(g_output)
 
-                if g_output == 'C4':
+                if g_output == 'H':
                     layer = nn.Conv2d(*args, **kwargs)
                     parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric())   
+                if g_output == 'V':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
+                if g_output == 'C4':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())   
+                
 
                 return layer
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
