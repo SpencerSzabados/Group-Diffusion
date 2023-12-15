@@ -325,22 +325,20 @@ class UNetModel(nn.Module):
 
         h = x.type(self.dtype)
 
-        print(self.training)
+        # print(self.training)
         for idx, module in enumerate(self.input_blocks):
-            print(module)
+            # print(module)
             h_org = module(h, emb)
 
-            h_rot90 = module(th.rot90(h, 1, dims = [-1, -2]), emb)
+            # h_rot90 = module(th.rot90(h, 1, dims = [-1, -2]), emb)
 
-            print('eqv:', th.abs(h_rot90 - th.rot90(h_org, 1, dims=[-1,-2])).max())
-            print('inv:', th.abs(h_rot90 - h_org ).max())
+            # print('eqv:', th.abs(h_rot90 - th.rot90(h_org, 1, dims=[-1,-2])).max())
+            # print('inv:', th.abs(h_rot90 - h_org ).max())
 
        
             h = h_org
             hs.append(h)     
 
-
-        # exit()
 
         h = self.middle_block(h, emb)
 

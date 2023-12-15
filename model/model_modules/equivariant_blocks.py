@@ -152,18 +152,18 @@ class GResBlock(TimestepBlock):
             h = in_conv(h)
         else:
             
-            h = self.in_layers[-1](x)
+            h = self.in_layers(x)
 
-            h_rot90 = self.in_layers[-1](pt.rot90(x, 1, dims = [-1, -2]))
+            # h_rot90 = self.in_layers[-1](pt.rot90(x, 1, dims = [-1, -2]))
 
             # h = x
 
             # h_rot90 = pt.rot90(x, 1, dims = [-1, -2])
 
 
-            print('eqv:', pt.abs(h_rot90 - pt.rot90(h, 1, dims=[-1,-2])).max())
+        #     print('eqv:', pt.abs(h_rot90 - pt.rot90(h, 1, dims=[-1,-2])).max())
 
-        exit()
+        # exit()
 
 
 
