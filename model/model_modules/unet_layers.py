@@ -1,6 +1,6 @@
 """
-    File contains all network layers, and network block, definition used in the 
-    construction of the consitency diffusion unet architecture.
+    File contains all network layers, and network blocks, definitions used in the 
+    construction of the normal (non-group equivariant) consitency diffusion unet architecture.
 """
 
 

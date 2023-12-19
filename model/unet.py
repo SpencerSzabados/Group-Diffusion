@@ -99,7 +99,7 @@ class UNetModel(nn.Module):
         self.g_input = g_input
         self.g_output = g_output
         self.kernel_size = 3 # TODO: Define these values using arguments to the model
-        self.padding = 2
+        self.padding = 1     # TODO: Define these values using arguments to the model
         self.num_res_blocks = num_res_blocks
         self.attention_resolutions = attention_resolutions
         self.dropout = dropout
@@ -247,7 +247,7 @@ class UNetModel(nn.Module):
                         GAttentionBlock(
                             ch,
                             g_equiv=self.g_equiv,
-                            g_input=self.g_input,
+                            g_input=self.g_output,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
                             num_head_channels=num_head_channels,

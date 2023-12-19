@@ -70,8 +70,8 @@ class GResBlock(TimestepBlock):
         use_conv=False,
         use_scale_shift_norm=False,
         dims=2,                     # Select Conv1D,Conv2d,Conv3D
-        kernel_size=5,
-        padding=2,
+        kernel_size=3,
+        padding=1,
         use_checkpoint=False,
         up=False,
         down=False,
@@ -133,14 +133,14 @@ class GResBlock(TimestepBlock):
             nn.SiLU(),
             nn.Dropout(p=dropout),
             zero_module(
-                gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_input, in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=3, padding=1)
+                gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_input, in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=self.kernel_size, padding=self.padding)
             )
         )
 
         if self.out_channels == self.in_channels:
             self.skip_connection = nn.Identity()
         elif use_conv:
-            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=1)
+            self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=self.kernel_size, padding=self.padding)
         else:
             self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=1)
 

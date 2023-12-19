@@ -29,7 +29,6 @@ import numpy as np
 # 20-21 within the first ~1K steps of training.
 INITIAL_LOG_LOSS_SCALE = 20.0
 
-
 class TrainLoop:
     def __init__(
         self,
@@ -204,13 +203,10 @@ class TrainLoop:
                     generator=generator,
                     ts="",
                 )
-
+                # Save the generated sample images
                 print(sample.shape)
                 grid_img = torchvision.utils.make_grid(sample, nrow = 8, normalize = True)
                 torchvision.utils.save_image(grid_img, f'tmp_imgs/{self.step}.pdf')
-
-
-                
 
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()

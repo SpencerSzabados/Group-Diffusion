@@ -1,6 +1,6 @@
 """
-    Script for generating Z2 group binary image dataset to test if generator can learn to generate mirror images of what is 
-    present in dataset.
+    Script for generating Z2 group binary image dataset to test if generator can learn
+    to generate mirror images of what is present in the dataset.
 """
 
 import numpy as np
