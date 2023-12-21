@@ -8,6 +8,7 @@ import torch as th
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
+import torchvision 
 
 
 # PyTorch 1.7 has SiLU, but we support PyTorch 1.5.
@@ -134,7 +135,30 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     embedding = th.cat([th.cos(args), th.sin(args)], dim=-1)
     if dim % 2:
         embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
+
     return embedding
+
+# DEBUG
+# Symmetrize the time embeddings with respect to pi rotations
+# def timestep_embedding(timesteps, dim, max_period=10000):
+#     half = dim // 2
+#     freqs = th.exp(
+#         -math.log(max_period) * th.arange(start=0, end=half, dtype=th.float32) / half
+#     ).to(device=timesteps.device)
+#     args = timesteps[:, None].float() * freqs[None]
+#     embedding = th.cat([th.cos(args), th.sin(args)], dim=-1)
+#     if dim % 2:
+#         embedding = th.cat([embedding, th.zeros_like(embedding[:, :1])], dim=-1)
+
+#     rot_angles = th.randint(low=0, high=1, size=(len(timesteps),)).to(embedding.device)
+#     mask = (rot_angles == 1)
+#     mask = th.reshape(rot_angles, [len(timesteps), 1])
+#     emb = torchvision.transforms.functional.hflip(embedding*mask) 
+#     mask = (rot_angles == 0)
+#     mask = th.reshape(rot_angles, [len(timesteps), 1])
+#     emb = emb + embedding*mask
+
+#     return emb
 
 
 def checkpoint(func, inputs, params, flag):

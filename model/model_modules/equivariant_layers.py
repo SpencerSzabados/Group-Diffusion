@@ -61,6 +61,7 @@ class Horizontal_Symmetric(nn.Module):
             self.left_mask = nn.Parameter(th.tensor([1.0]* left_channel + [0.0] * (w - left_channel), device = X.device)[None, None, None, :], requires_grad = False)
         return X * self.left_mask + th.flip(X, dims=[-1]) * (1 - self.left_mask)
 
+
 class C4_Symmetric(nn.Module):
     def forward(self, X):
         _, _, h, w = X.shape
@@ -135,14 +136,11 @@ class GSymmetrize(nn.Module):
         
     def forward(self, x):
         input_shape = x.shape
-        print("x shape:\n "+str(input_shape))
         rot_angles = pt.randint(low=0,high=self.nti, size=(input_shape[0],))
-        print("rot_angles shape:\n "+str(rot_angles.shape))
-        print("rot_angles:\n "+str(rot_angles))
         
-        y = pt.zeros_like(x)
-        for angle in range(4):
-            idx_mask = (rot_angles == angle) # Mark which input vectors to rotate
+        y = pt.zeros_like(x).to(x.device)
+        for angle in range(self.nti):
+            idx_mask = (rot_angles == angle).to(x.device) # Mark which input vectors to rotate
             idx_mask = pt.reshape(idx_mask, [input_shape[0], 1, 1, 1])
             y = y + pt.rot90(x*idx_mask, k=angle, dims=[2,3])
         
@@ -264,7 +262,7 @@ class SplitGConv2D(nn.Module):
                                    inds.shape[2], 
                                    inds.shape[3])
         w_transformed = w_indexed.permute(0, 1, 3, 2, 4, 5) # Previously w_transformed = w_indexed.permute(0, 2, 1, 3, 4, 5)
-        return w_transformed.contiguous()
+        return w_transformed.contiguous()                   #                                             (0, 1, 3, 2, 4, 5)
     
     def transform_filter_2d_nnchw(self, y, shape):
         """
@@ -316,19 +314,19 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             if g_input == 'Z2' and g_output == 'Z2':
                 return nn.Conv2d(*args, **kwargs)
             else:
-                if g_output == 'H':
+                if g_output == 'KH':
                     layer = nn.Conv2d(*args, **kwargs)
                     parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric()) 
                     return layer  
-                elif g_output == 'V':
+                elif g_output == 'KV':
                     layer = nn.Conv2d(*args, **kwargs)
                     parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
                     return layer
                 # DEBUG - removed this call to test GConv2d with new dataloader
-                # elif g_output == 'C4':
-                #     layer = nn.Conv2d(*args, **kwargs)
-                #     parametrize.register_parametrization(layer, "weight", C4_Symmetric())  
-                #     return layer 
+                elif g_output == 'KC4':
+                    layer = nn.Conv2d(*args, **kwargs)
+                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())  
+                    return layer 
                 else:
                     return gconv2d(g_input, g_output, *args, **kwargs)
         raise ValueError(f"unsupported number of dimensions for equivariant in gconv_nd: {dims}")

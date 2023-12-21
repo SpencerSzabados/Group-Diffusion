@@ -12,6 +12,7 @@ import torch as th
 from pathlib import Path
 from functools import partial
 from multiprocessing import cpu_count
+import torchvision
 
 from .utils.fp16_util import convert_module_to_f16, convert_module_to_f32
 from .utils.nn import (
@@ -179,8 +180,9 @@ class UNetModel(nn.Module):
                         if resblock_updown
                         else GDownsample(
                                 ch,
+                                use_conv=self.conv_resample,
+                                g_equiv=self.g_equiv,
                                 g_input=self.g_output,
-                                use_conv=self.conv_resample, 
                                 dims=dims, 
                                 out_channels=out_ch
                         )
@@ -192,6 +194,9 @@ class UNetModel(nn.Module):
                 self._feature_size += ch
 
         self.middle_block = TimestepEmbedSequential(
+            # GSymmetrize(
+            #     g_output=self.g_output
+            # ),
             GResBlock(
                 ch,
                 time_embed_dim,
@@ -272,8 +277,9 @@ class UNetModel(nn.Module):
                         if resblock_updown
                         else GUpsample(
                             ch,
+                            use_conv=self.conv_resample,
+                            g_equiv=self.g_equiv,
                             g_input=self.g_output,
-                            use_conv=self.conv_resample, 
                             dims=dims, 
                             out_channels=out_ch
                         )
@@ -325,6 +331,18 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y) 
 
         h = x.type(self.dtype)
+
+        # # DEBUG
+        # print("h: "+str(h), flush=True)
+        # h = h
+        # layer = self.input_blocks[0]
+        # h_org = layer(h, emb)
+        # print("emb: "+str(emb))
+        # emb_rot = torchvision.transforms.functional.hflip(emb)
+        # h_rot = layer(h, emb_rot)
+        # difference = th.abs(h_rot-h_org)
+        # print("difference: "+str(difference))
+        # print("error: "+str(th.sum(difference)))
 
         for module in self.input_blocks:
             h_org = module(h, emb)

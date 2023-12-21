@@ -184,6 +184,7 @@ class TrainLoop:
                 # Code for performing incremental image sampling during training.
                 # TODO: Make this function more general and accept model paramters during sampling 
                 #       rather than the hard coded values used currently.
+                logger.log("generating samples...")
                 generator = get_generator('determ', 64, 42)
                 sample = karras_sample(
                     self.diffusion,
@@ -204,7 +205,7 @@ class TrainLoop:
                     ts="",
                 )
                 # Save the generated sample images
-                print(sample.shape)
+                logger.log("sampled tensor shape: "+str(sample.shape))
                 grid_img = torchvision.utils.make_grid(sample, nrow = 8, normalize = True)
                 torchvision.utils.save_image(grid_img, f'tmp_imgs/{self.step}.pdf')
 
