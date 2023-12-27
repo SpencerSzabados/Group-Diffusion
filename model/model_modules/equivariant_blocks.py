@@ -83,18 +83,20 @@ class GResBlock(TimestepBlock):
         
         # Detect input group and scale number of channels based on corresponding scaling factor
         # See 'equivariant_layers.py' for the origin of these values.
-        nti = 1
-        if self.g_equiv:
-            if self.g_input == 'Z2':
-                nti = 1
-            elif self.g_input == 'H' or self.g_input == 'V':
-                nti = 2
-            elif self.g_input == 'C4':
-                nti = 4
-            elif self.g_input == 'D4':
-                nti = 8
-            else:    
-                raise ValueError(f"unsupported g_input in GResBock(): {g_input}")
+        # if len(self.g_input.split('_')) > 1:
+        #     g_input, suffix = g_input.split('_')
+        # nti = 1
+        # if self.g_equiv:
+        #     if self.g_input == 'Z2':
+        #         nti = 1
+        #     elif self.g_input == 'H' or self.g_input == 'V':
+        #         nti = 2
+        #     elif self.g_input == 'C4':
+        #         nti = 4
+        #     elif self.g_input == 'D4':
+        #         nti = 8
+        #     else:    
+        #         raise ValueError(f"unsupported g_input in GResBock(): {g_input}")
         
         self.in_channels = in_channels
         self.emb_channels = emb_channels
@@ -325,18 +327,20 @@ class GAttentionBlock(nn.Module):
 
         # Detect input group and scale number of channels based on corresponding scaling factor
         # See 'equivariant_layers.py' for the origin of these values.
-        nti = 1
-        if self.g_equiv:
-            if self.g_input == 'Z2':
-                nti = 1
-            elif self.g_input == 'H' or self.g_input == 'V':
-                nti = 2
-            elif self.g_input == 'C4':
-                nti = 4
-            elif self.g_input == 'D4':
-                nti = 8
-            else:
-                raise ValueError(f"unsupported g_input in GAttentionBlcok(): {g_input}")
+        # if len(self.g_input.split('_')) > 1:
+        #     g_input, suffix = g_input.split('_')
+        # nti = 1
+        # if self.g_equiv:
+        #     if self.g_input == 'Z2':
+        #         nti = 1
+        #     elif self.g_input == 'H' or self.g_input == 'V':
+        #         nti = 2
+        #     elif self.g_input == 'C4':
+        #         nti = 4
+        #     elif self.g_input == 'D4':
+        #         nti = 8
+        #     else:
+        #         raise ValueError(f"unsupported g_input in GAttentionBlcok(): {g_input}")
 
         self.channels = channels
         if num_head_channels == -1:

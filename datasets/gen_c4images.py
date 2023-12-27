@@ -1,13 +1,20 @@
 """
-    Script for generating C4 group binary image dataset to test if generator can learn to generate mirror images of what is 
-    present in dataset.
+    Author: Spencer Szabados
+    Date: 2023-12-24 
 
-    TODO: Currently this only generates an image with on channel but should have 3.
+    Script for generating toy example of C4 group binary image dataset to test if the model
+    can learn to generate rotated images of what is present in dataset.
+
+    :param data_path: Set this to the desired dataset location of the generated images.
+    :launch command: python gen_c4images.py
 """
 
 import numpy as np
 from PIL import Image
 import os
+
+# Directory 
+DATA_PATH = '/home/sszabados/datasets/c4images'
 
 # Generation paramters
 HIGHT_WIDTH = 28 # Resolution of generated images
@@ -17,8 +24,7 @@ DIVIDER = 0.5    # The percentage of pixels that are coloured from left to right
 NUM_IMAGES = 300
 
 if __name__ == '__main__':
-    data_path = '/home/sszabados/datasets/c4images'
-
+    # Generate images
     for n in range(NUM_IMAGES):
         image = np.zeros(shape=(HIGHT_WIDTH, HIGHT_WIDTH))
         colour = np.random.uniform(int(255*(COLOUR-DELTA)),int(255*(COLOUR)))
@@ -29,5 +35,5 @@ if __name__ == '__main__':
             for j in range(int(DIVIDER*HIGHT_WIDTH), HIGHT_WIDTH):
                 image[j,i] = colour
         image = Image.fromarray(image).convert('RGB')
-        image.save(os.path.join(data_path, f"{n}.JPEG"))
+        image.save(os.path.join(DATA_PATH, f"{n}.JPEG"))
         

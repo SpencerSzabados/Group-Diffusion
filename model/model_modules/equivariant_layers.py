@@ -159,7 +159,7 @@ class GSymmetrize(nn.Module):
     (https://github.com/basveeling/keras-gcnn/blob/master/keras_gcnn/layers/convolutional.py#L114)
 """
 
-class SplitGConv2D(nn.Module):
+class SplitGConv2d(nn.Module):
     """
     Group equivariant convolution layer.
     
@@ -183,7 +183,7 @@ class SplitGConv2D(nn.Module):
                 padding=0, 
                 bias=True) -> None:
         
-        super(SplitGConv2D, self).__init__()
+        super(SplitGConv2d, self).__init__()
 
         # Transform kernel size argument 
         self.ksize = kernel_size
@@ -291,8 +291,11 @@ class SplitGConv2D(nn.Module):
             y = y + bias
 
         # TODO - remove this line and add GAvgPool2D layers at each occurance of gconv
-        y = pt.mean(y, dim=2)
+        y_pooled = th.zeros(size=(batch_size,self.out_channels,ny_out,ny_out)).to(input.device)
+        for i in range(self.nto):
+            y_pooled += y[:,:,i,:,:]
         # y = self.transform_filter_2d_nchw(y, [batch_size, self.out_channels, self.nto, ny_out, nx_out])
+        y = y_pooled
 
         return y
 
@@ -301,12 +304,132 @@ def gconv2d(g_input, g_output, *args, **kwargs):
     """
     Wrapper function for creating group equivariant layers.
     """
-    return SplitGConv2D(g_input, g_output, *args, **kwargs)
+    return SplitGConv2d(g_input, g_output, *args, **kwargs)
+
+
+class KernelGConv2d(nn.Module):
+    """
+    Group equivariant convolution layer. Implemetation is based on manipulating the convolutional kernel.
+    
+    :parm g_input: One of ('Z2', 'C4', 'D4'). Use 'Z2' for the first layer. Use 'C4' or 'D4' for later layers.
+        The parameter value 'Z2' specifies the data being convolved is from the Z^2 plane (discrete mesh).
+    :parm g_output: One of ('C4', 'D4'). What kind of transformations to use (rotations or roto-reflections).
+        The value of g_input of the subsequent layer should match the value of g_output from the previous.
+    :parm in_channels: The number of input channels. Based on the input group action the number of channels 
+        used is equal to nti*in_channels.
+    :parm out_channels: The number of output channels. Based on the output group action the number of channels
+        used is equal to nto*out_channels.
+    """
+
+    def __init__(self, 
+                g_input, 
+                g_output, 
+                in_channels, 
+                out_channels, 
+                kernel_size=3, 
+                stride=1,
+                padding=0, 
+                bias=True) -> None:
+        super(KernelGConv2d, self).__init__()
+
+        self.g_output = g_output
+        self.g_input = g_input
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+
+        if self.g_output == 'H' or self.g_output == 'V':
+            self.num_group = 2
+        elif self.g_output == 'C4':
+            self.num_group = 4
+        else:
+            raise NotImplementedError
+
+        self.conv_weight = nn.Parameter(th.randn(out_channels, in_channels, kernel_size, kernel_size))
+        
+        if bias:
+            self.bias = nn.Parameter(th.randn(out_channels)[None, :,  None, None])
+
+        # init.xavier_normal_(self.conv_weight)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = self.in_channels
+        for k in _pair(self.kernel_size):
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.conv_weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, input):
+        out = self.bias
+        # print(self.g_output)
+        # exit()
+
+        if self.g_output == 'V':
+            out = out + F.conv2d(
+                input = input, 
+                weight = self.conv_weight, 
+                bias = None, 
+                stride = self.stride, 
+                padding = self.padding,
+                dilation = 1,
+                groups = 1
+            )
+
+            out = out + F.conv2d(
+                input = input, 
+                weight = th.flip(self.conv_weight, dims = [-2]),
+                bias = None, 
+                stride = self.stride, 
+                padding = self.padding,
+                dilation = 1,
+                groups = 1
+            )
+           
+        elif self.g_output == 'H':
+            out = out + F.conv2d(
+                input = input, 
+                weight = self.conv_weight, 
+                bias = None, 
+                stride = self.stride, 
+                padding = self.padding,
+                dilation = 1,
+                groups = 1
+            )
+
+            out = out + F.conv2d(
+                input = input, 
+                weight = th.flip(self.conv_weight, dims = [-1]),
+                bias = None, 
+                stride = self.stride, 
+                padding = self.padding,
+                dilation = 1,
+                groups = 1
+            )
+        elif self.g_output == 'C4':
+            for k in range(4):
+                out = out + F.conv2d(
+                    input = input, 
+                    weight = th.rot90(self.conv_weight, k = k, dims = [-1, -2]),
+                    bias = None, 
+                    stride = self.stride, 
+                    padding = self.padding,
+                    dilation = 1,
+                    groups = 1
+                )
+        else:
+            raise NotImplementedError
+        
+        return out
 
 
 def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
     """
-    Create a 1D, 2D, or 3D convolution layer that is either group equivariant or not.
+    Create a 1D, 2D, or 3D group equivariant convolution layer.
     """
     if g_equiv == True:
         if dims == 2:
@@ -314,22 +437,24 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             if g_input == 'Z2' and g_output == 'Z2':
                 return nn.Conv2d(*args, **kwargs)
             else:
-                if g_output == 'KH':
-                    layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric()) 
-                    return layer  
-                elif g_output == 'KV':
-                    layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
-                    return layer
-                # DEBUG - removed this call to test GConv2d with new dataloader
-                elif g_output == 'KC4':
-                    layer = nn.Conv2d(*args, **kwargs)
-                    parametrize.register_parametrization(layer, "weight", C4_Symmetric())  
-                    return layer 
+                if len(g_output.split('_')) > 1:
+                    g_output, suffix = g_output.split('_')
+
+                    if len(g_input.split('_')) > 1:
+                        g_input, suffix_ = g_input.split('_')
                 else:
-                    return gconv2d(g_input, g_output, *args, **kwargs)
-        raise ValueError(f"unsupported number of dimensions for equivariant in gconv_nd: {dims}")
+                    suffix = None
+                # Test if kernel method is desired
+                if suffix == 'K':
+                    logger.info(f'Initializing weight tied kernelgconv equivariant convolution layer: {g_input, g_output}')
+                    return KernelGConv2d(g_input, g_output, *args, **kwargs)
+                elif suffix == None:
+                    logger.info(f'Initializing splitgconv equivariant convolution layer: {g_input, g_output}')
+                    return SplitGConv2d(g_input, g_output, *args, **kwargs)
+                else:
+                    raise NotImplementedError(f"unsupported g_input g_ouput combination in gconv_nd: {g_input, g_output}\n or unsupported suffix: {suffix}")
+        raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
+    
     elif g_equiv == False:
         if dims == 1:
             return nn.Conv1d(*args, **kwargs)
@@ -339,7 +464,6 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
             return nn.Conv3d(*args, **kwargs)
         raise ValueError(f"unsupported dimensions in gconv_ng: {dims}")
     raise ValueError(f"unsupported group equivariance boolean value in gconv_ng: {g_equiv}")
-
 
 
 ### ---[ Pooling layers ]------------------------
