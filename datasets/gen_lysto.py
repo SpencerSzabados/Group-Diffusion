@@ -6,6 +6,7 @@
     which contains various (native resolution 299x299 px) images of human cancer cells.
 """
 import os
+import re
 import h5py
 import numpy as np
 from PIL import Image
@@ -42,10 +43,26 @@ def convert_h5_npy():
     npy_dataset = np.array(h5_dataset)
     npy_images = np.array(images)
     npy_labels = np.array(labels)
+    # Preprocess organ labels to remove sub-identifiers and convert strings to number
+    # labels as follow:
+    # [colon, prostate, breast] --> [0,1,2]
     npy_orangs = np.array(organs)
+    num_npy_organs = []
+    for i in range(len(npy_orangs)):
+        # Regex pattern splits on substrings "'" and "_"
+        label = re.split("_", npy_orangs[i].decode("utf-8"))[0]
+        if label == "colon":
+            num_npy_organs.append(0)
+        elif label == "prostate":
+            num_npy_organs.append(1)
+        elif label == "breast":
+            num_npy_organs.append(2)
+        else:
+            RuntimeWarning(f'Encountered unknown LYSTO label.')
+    # Save data
     np.save(h5_data_dir+npy_dataset_name, npy_images)
     np.save(h5_data_dir+npy_labels_name, npy_labels)
-    np.save(h5_data_dir+npy_organ_names, npy_orangs)
+    np.save(h5_data_dir+npy_organ_names, num_npy_organs)
         
 
 def gen_lysto128_npy():
@@ -94,10 +111,9 @@ def gen_lysto128_JPG():
     # Load the .npy dataset
     # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
     org_dataset = np.load(str(npy_data_dir)+str(npy_dataset_name))
-    labels = np.load(str(npy_data_dir)+str(npy_labels_name))
+    labels = np.load(str(npy_data_dir)+str(npy_organ_names))
     # Create an empty array for downscaled images
     scaled_dataset = np.empty((org_dataset.shape[0], RES, RES, org_dataset.shape[3]), dtype=org_dataset.dtype)
-
     for i in range(org_dataset.shape[0]):
         image = Image.fromarray(org_dataset[i])
         scaled_image = image.resize((RES, RES), Image.ANTIALIAS)
