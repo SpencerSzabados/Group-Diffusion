@@ -29,4 +29,3 @@ python lsun_bedroom.py bedroom_train_lmdb lsun_train_output_dir
 This creates a directory called `lsun_train_output_dir`. This directory can be passed to the training scripts via the `--data_dir` argument.
 
 # Generating sythetics datasets
-## Distribution matching datasets

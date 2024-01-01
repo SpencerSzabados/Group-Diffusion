@@ -1,1 +1,12 @@
 reference_code
+**__pycache__
+*.npy
+*.pyc
+*~
+tmp*
+tmp_imgs/
+tmp_imgs_c4_c4/
+tmp_imgs_flip_flip/
+tmp_imgs_flip_flip_ker5/
+tmp_imgs_z2_z2/
+tmp_imgs_z2_z2_no_xflip/
