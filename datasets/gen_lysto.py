@@ -16,15 +16,13 @@ from PIL import Image
 h5_data_dir = "/home/sszabados/datasets/lysto/"
 h5_dataset_name = "training.h5"
 label_dir = "/home/sszabados/datasets/lysto/"
+data_dir = "/home/sszabados/datasets/lysto64_crop/"
 labels_name = "training_labels.csv"
-npy_data_dir = h5_data_dir
-npy_labels_dir = label_dir
 npy_dataset_name = "train_images.npy" 
 npy_labels_name = "train_labels.npy"
 npy_organ_names = "train_organs.npy"
-jpg_data_dir = "/home/sszabados/datasets/lysto32/"
- 
 
+ 
 def convert_h5_npy():
     """
     Open lysto h5 file archive and convert it to a npy dataset file in native resolution.
@@ -50,6 +48,7 @@ def convert_h5_npy():
     for i in range(len(npy_orangs)):
         # Regex pattern splits on substrings "'" and "_"
         label = re.split("_", npy_orangs[i].decode("utf-8"))[0]
+        # label = re.split("_", npy_orangs[i])[0]
         if label == "colon":
             num_npy_organs.append(0)
         elif label == "prostate":
@@ -59,9 +58,9 @@ def convert_h5_npy():
         else:
             RuntimeWarning(f'Encountered unknown LYSTO label.')
     # Save data
-    np.save(h5_data_dir+npy_dataset_name, npy_images)
-    np.save(h5_data_dir+npy_labels_name, npy_labels)
-    np.save(h5_data_dir+npy_organ_names, num_npy_organs)
+    np.save(data_dir+npy_dataset_name, npy_images)
+    np.save(data_dir+npy_labels_name, npy_labels)
+    np.save(data_dir+npy_organ_names, num_npy_organs)
     
 
 def gen_lysto_npy(resolution=299):
@@ -70,16 +69,56 @@ def gen_lysto_npy(resolution=299):
     """
     # Load the .npy dataset
     # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
-    org_dataset = np.load(str(npy_data_dir)+str(npy_dataset_name))
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
     # Create an empty array for downscaled images
     scaled_dataset = np.empty((org_dataset.shape[0], resolution, resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
 
     for i in range(org_dataset.shape[0]):
         image = Image.fromarray(org_dataset[i])
-        scaled_image = image.resize((resolution, resolution), Image.ANTIALIAS)
+        scaled_image = image.resize((resolution, resolution), Image.LANCZOS)
         scaled_dataset[i] = np.array(scaled_image)
 
-    np.save(h5_data_dir+npy_dataset_name, scaled_dataset)  
+    np.save(data_dir+npy_dataset_name, scaled_dataset)  
+
+
+def gen_lysto_center_crop_npy(resolution=299):
+    """
+    Open lysto267.npy dataset and downscale images to 64x64px from 267x267px.
+    """
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    # Create an empty array for downscaled images
+    scaled_dataset = np.empty((org_dataset.shape[0], resolution, resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
+
+    for i in range(org_dataset.shape[0]):
+        image = Image.fromarray(org_dataset[i])
+
+        # Calculate cropping parameters to center crop
+        width, height = image.size
+        left = (width - resolution) / 2
+        top = (height - resolution) / 2
+        right = (width + resolution) / 2
+        bottom = (height + resolution) / 2
+
+        # Perform center crop
+        img_cropped = image.crop((left, top, right, bottom))
+
+        scaled_dataset[i] = np.array(img_cropped)
+
+    np.save(data_dir+npy_dataset_name, scaled_dataset)  
+
+
+def convert_npy_JPG():
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
+    # Create an empty array for downscaled images
+    for i in range(org_dataset.shape[0]):
+        image = Image.fromarray(org_dataset[i])
+        image.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
+
 
 def gen_lysto_JPG(resolution=299):
     """
@@ -89,17 +128,48 @@ def gen_lysto_JPG(resolution=299):
     """
     # Load the .npy dataset
     # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
-    org_dataset = np.load(str(npy_data_dir)+str(npy_dataset_name))
-    labels = np.load(str(npy_data_dir)+str(npy_organ_names))
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
     # Create an empty array for downscaled images
-    scaled_dataset = np.empty((org_dataset.shape[0], resolution, resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
     for i in range(org_dataset.shape[0]):
         image = Image.fromarray(org_dataset[i])
-        scaled_image = image.resize((resolution, resolution), Image.ANTIALIAS)
-        scaled_dataset[i] = np.array(scaled_image)
+        scaled_image = image.resize((resolution, resolution), Image.LANCZOS)
 
-        image.save(os.path.join(jpg_data_dir, f"{labels[i]}_{i}.JPEG"))
+        image.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
+
+
+def gen_lysto_center_crop_JPG(resolution=299):
+    # Ensure the output directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
+    # Create an empty array for downscaled images
+    for i in range(org_dataset.shape[0]):
+
+        image = Image.fromarray(org_dataset[i])
+
+        # Calculate cropping parameters to center crop
+        width, height = image.size
+        left = (width - resolution) / 2
+        top = (height - resolution) / 2
+        right = (width + resolution) / 2
+        bottom = (height + resolution) / 2
+
+        # Perform center crop
+        img_cropped = image.crop((left, top, right, bottom))
+
+        # Resize the cropped image to the target size
+        # img_resized = img_cropped.resize((resolution, resolution), Image.LANCZOS)
+
+        # Save the result to the output directory
+        img_cropped.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
+
 
 if __name__=="__main__":
     convert_h5_npy()
-    gen_lysto_npy(resolution=32)
+    gen_lysto_center_crop_npy(resolution=64)
+    convert_npy_JPG()
+
