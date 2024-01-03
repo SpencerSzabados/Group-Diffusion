@@ -53,17 +53,21 @@ class KarrasDenoiser:
         self.rho = rho
         self.num_timesteps = 40
 
+
     def get_snr(self, sigmas):
         return sigmas**-2
 
+
     def get_sigmas(self, sigmas):
         return sigmas
+
 
     def get_scalings(self, sigma):
         c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
         c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
         c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
         return c_skip, c_out, c_in
+
 
     def get_scalings_for_boundary_condition(self, sigma):
         c_skip = self.sigma_data**2 / (
@@ -77,6 +81,7 @@ class KarrasDenoiser:
         c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
         return c_skip, c_out, c_in
     
+
     def training_losses(self, model, x_start, sigmas, model_kwargs=None, noise=None):
         if model_kwargs is None:
             model_kwargs = {}
@@ -335,6 +340,7 @@ class KarrasDenoiser:
 
         return terms
 
+
     def denoise(self, model, x_t, sigmas, **model_kwargs):
         import torch.distributed as dist
         if not self.distillation:
@@ -407,6 +413,7 @@ def karras_sample(
     else:
         sampler_args = {}
 
+
     def denoiser(x_t, sigma):
         _, denoised = diffusion.denoise(model, x_t, sigma, **model_kwargs)
         if clip_denoised:
@@ -414,7 +421,7 @@ def karras_sample(
 
         return denoised
     
-    # TODO: What does this code do?
+    # Compute a sample from the diffusion model and return it
     x_0 = sample_fn(
         denoiser,
         x_T,
@@ -596,6 +603,7 @@ def sample_euler(
         x = x + d * dt
 
     return x
+
 
 @th.no_grad()
 def sample_dpm(

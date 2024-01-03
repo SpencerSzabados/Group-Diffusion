@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 
+
 # convert ints of base 10 to the ones of base 2
 def int_to_bits(x, bits=None, dtype=torch.uint8):
     assert not(x.is_floating_point() or x.is_complex()), "x isn't an integer type"
@@ -10,12 +11,10 @@ def int_to_bits(x, bits=None, dtype=torch.uint8):
     return x.unsqueeze(-1).bitwise_and(mask).ne(0).to(dtype=dtype)
 
 
-
 def int_to_bits_np(x, bits=None, dtype=np.uint8):
     # assert not(x.is_floating_point() or x.is_complex()), "x isn't an integer type"
     mask = 2**np.arange(bits-1,-1,-1)
     return np.not_equal(np.bitwise_and(np.expand_dims(x, axis = [-1]), mask), 0).astype(dtype)
-
 
 
 # convert ints of base 2 to the ones of base 10
@@ -41,8 +40,6 @@ def bits_to_int_np(x, idx_D = 1, dtype=np.uint8):
 
     # convert
     return np.sum(x * W, axis = idx_D)
-
-
 
 
 if __name__ == '__main__':

@@ -332,18 +332,6 @@ class UNetModel(nn.Module):
 
         h = x.type(self.dtype)
 
-        # # DEBUG
-        # print("h: "+str(h), flush=True)
-        # h = h
-        # layer = self.input_blocks[0]
-        # h_org = layer(h, emb)
-        # print("emb: "+str(emb))
-        # emb_rot = torchvision.transforms.functional.hflip(emb)
-        # h_rot = layer(h, emb_rot)
-        # difference = th.abs(h_rot-h_org)
-        # print("difference: "+str(difference))
-        # print("error: "+str(th.sum(difference)))
-
         for module in self.input_blocks:
             h_org = module(h, emb)
             h = h_org

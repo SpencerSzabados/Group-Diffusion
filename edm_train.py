@@ -84,8 +84,6 @@ def main():
         class_cond=args.class_cond,
     )
 
-    logger.log("creating data loader...")
-
     logger.log("training...")
 
     TrainLoop(
@@ -105,6 +103,7 @@ def main():
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
     ).run_loop()
+
 
 if __name__ == "__main__":
     main()

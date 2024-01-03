@@ -184,6 +184,7 @@ class TrainLoop:
                 # Code for performing incremental image sampling during training.
                 # TODO: Make this function more general and accept model paramters during sampling 
                 #       rather than the hard coded values used currently.
+                #       This sould be modified if training on a dataset of different resolution.
                 logger.log("generating samples...")
                 generator = get_generator('determ', 64, 42)
                 sample = karras_sample(

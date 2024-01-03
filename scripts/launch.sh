@@ -5,7 +5,7 @@
 # Testing code 
 ######################################################################################
 # Train model on C4 group images 
-OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/ python edm_train.py --g_equiv True --g_input Z2 --g_output C4 --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm False --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 100 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --data_dir /home/datasets/c4images
+OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/ python edm_train.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 512 --image_size 32 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --data_dir /home/datasets/c4test
 
 ######################################################################################
 # Sampling code 

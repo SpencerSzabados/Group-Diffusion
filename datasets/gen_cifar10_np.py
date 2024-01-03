@@ -60,7 +60,7 @@ import numpy as np
 
 #     return DataLoader(dataset, batch_size=batch_size, num_workers = 24)
     
-# # for testing the implementation of datasets
+# for testing the implementation of datasets
 if __name__ == '__main__':
     cifar10_dataset = datasets.CIFAR10(train=True, root = '../data', download=True)
     images = []

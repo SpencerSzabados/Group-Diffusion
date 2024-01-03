@@ -89,7 +89,7 @@ class ImageDataset(Dataset):
         shard=0,
         num_shards=1,
         random_crop=False,
-        random_flip=True,
+        random_flip=False,
     ):
         super().__init__()
         self.resolution = resolution
@@ -116,7 +116,7 @@ class ImageDataset(Dataset):
         if self.random_flip and random.random() < 0.5:
             arr = arr[:, ::-1]
 
-        arr = arr.astype(np.float32) / 127.5 - 1
+        arr = arr.astype(np.float32) / 127.5 - 1 # Rescale images from [0,255] to [-1,1]
 
         out_dict = {}
         if self.local_classes is not None:

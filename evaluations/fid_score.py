@@ -313,6 +313,7 @@ def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1, eq
 
     return fid_value
 
+
 def compute_statistics_of_path_cache(path, cache_file_dir, model, batch_size, dims, device, num_workers, eqv, gen_op = None):
     if os.path.exists(cache_file_dir):
         m, s = compute_statistics_of_path(cache_file_dir, model, batch_size,
@@ -398,7 +399,6 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
     return inv_fid_list
 
 
-
 def save_fid_stats(paths, batch_size, device, dims, num_workers=1):
     """Calculates the FID of two paths"""
     if not os.path.exists(paths[0]):
@@ -450,6 +450,7 @@ def main():
                                           args.dims,
                                           num_workers)
     print('FID: ', fid_value)
+
 
 if __name__ == '__main__':
     main()

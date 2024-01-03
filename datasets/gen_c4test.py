@@ -24,10 +24,10 @@ import os
 DATA_PATH = '/home/sszabados/datasets/c4test'
 
 # Generation paramters
-HIGHT_WIDTH = 32 # Resolution of generated images
+HIGHT_WIDTH = 28 # Resolution of generated images
 COLOUR = 1       # [0,1] colour value defined as int(COLOUR*255)
 DIVIDER = 0.5    # The percentage of pixels that are coloured from left to right
-NUM_IMAGES = 300
+NUM_IMAGES = 512
 
 if __name__ == '__main__':
     # Generate images
