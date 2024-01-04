@@ -3,6 +3,7 @@ reference_code
 *.npy
 *.pyc
 *~
+*.JPEG
 tmp*
 tmp_imgs/
 tmp_imgs_c4_c4/

@@ -59,6 +59,8 @@ class Karras_Score:
         self.min_inv_rho = self.sigma_min ** (1 / self.rho)
         self.max_inv_rho = self.sigma_max ** (1 / self.rho)
 
+        self.sigmas = self.get_sigmas_karras(self.num_timesteps)
+
         self.loss_norm = loss_norm
         if loss_norm == "lpips":
             self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")
@@ -96,17 +98,20 @@ class Karras_Score:
         """Return the score (gradient) of denoising diffusion model"""
 
         c_skip, c_out, c_in = [self.append_dims(x, x_t.ndim) for x in self.get_scalings(sigma)]
-
         rescaled_t = 1000*0.25*th.log(sigma+1e-44)
-        
         model_output = self.model(c_in*x_t, rescaled_t)
         denoised = c_out*model_output+c_skip*x_t
+        score = (x_t-denoised)/self.append_dims(sigma, x_t.ndim)
 
-        return (x_t-denoised)/self.append_dims(sigma, x_t.ndim)
+        return score
     
-    def get_score(self, x_t, label):
-       sigma = self.calculate_sigma_karras(label)
-       return self.denoise_score(x_t, sigma)
+    def get_score(self, x, label):
+    #    sigma = self.calculate_sigma_karras(label)
+       s_in = x.new_ones([x.shape[0]])
+       sigma = self.sigmas[label[0]]
+       noise = th.randn_like(x)
+       x_t = x + noise * self.append_dims(sigma, x.ndim)
+       return self.denoise_score(x_t, sigma*s_in)
     
 
 def get_model_fn(model, train=False):
@@ -117,7 +122,7 @@ def get_model_fn(model, train=False):
     train: `True` for training and `False` for evaluation.
 
   Returns:
-    A model function.
+    A model function which returns the score of the model at a given datapoint.
   """
 
   def model_fn(x, labels):
@@ -132,9 +137,8 @@ def get_model_fn(model, train=False):
       A tuple of (model output, new mutable states)
     """
     if not train:
-        karras_score = Karras_Score(model)
-        # print(karras_score.denoise_score(x, labels), flush=True) # DEBUG
-        # print(model(x, labels))
+        karras_score = Karras_Score(model=model)
+        print(th.norm(karras_score.get_score(x, labels)), flush=True) # DEBUG
         return karras_score.get_score(x, labels)
     else:
         raise NotImplementedError(f"NLL computation is only implemented for inference not during training.")
@@ -156,43 +160,20 @@ def get_score_fn(sde, model, train=False, continuous=False):
     """
     model_fn = get_model_fn(model, train=train)
 
-    if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
-        def score_fn(x, t):
-            # Scale neural network output by standard deviation and flip sign
-            if continuous or isinstance(sde, sde_lib.subVPSDE):
-                # For VP-trained models, t=0 corresponds to the lowest noise level
-                # The maximum value of time embedding is assumed to 999 for
-                # continuously-trained models.
-                labels = t * 999
-                score = model_fn(x, labels) 
-                std = sde.marginal_prob(th.zeros_like(x), t)[1]
-            else:
-                # For VP-trained models, t=0 corresponds to the lowest noise level
-                labels = t * (sde.N - 1)
-                score = model_fn(x, labels)
-                std = sde.sqrt_1m_alphas_cumprod.to(labels.device)[labels.long()]
+    def score_fn(x, t):
+        if continuous: # DEBUG what is the mean of teh marginal in terms of a label here? Should this not be the time?
+            labels = sde.marginal_prob(th.zeros_like(x), t)[1]
+        else:
+            # For VE-trained models, t=0 corresponds to the highest noise level
+            labels = sde.T - t
+            labels *= sde.N - 1
+            labels = th.round(labels).long() 
+        print("label: "+str(labels)) # DEBUG
+        print("X: "+str(x[0][0][0])) # DEBUG
+        score = model_fn(x, labels)
 
-            score = -score / std[:, None, None, None]
-            return score
-        
-    elif isinstance(sde, sde_lib.VESDE):
-        def score_fn(x, t):
-            # if continuous: # DEBUG what is the mean of teh marginal in terms of a label here? Should this not be the time?
-            #     labels = sde.marginal_prob(th.zeros_like(x), t)[1]
-            # else:
-            #     # For VE-trained models, t=0 corresponds to the highest noise level
-            #     labels = sde.T - t
-            #     print("Time t: "+str(t)) # DEBUG
-            #     labels *= sde.N - 1
-            #     labels = th.round(labels).long()
-            # print("label: "+str(labels)) # DEBUG
-            # score = model_fn(x, labels)
-            score = model_fn(x, t)
-            return score
-        
-    else:
-        raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
-
+        return score
+    
     return score_fn
 
 
@@ -216,6 +197,16 @@ def get_div_fn(fn):
             grad_fn_eps = th.autograd.grad(fn_eps, x)[0]
         x.requires_grad_(False)
         return th.sum(grad_fn_eps * eps, dim=tuple(range(1, len(x.shape))))
+
+    # def div_fn(x, t, noise):
+    #     with th.enable_grad():
+    #         sigma = (80. ** (1 / 7.) + t*(0.002 ** (1 / 7.)-80. ** (1 / 7.)))**7.
+    #         x_t = x + noise * sigma
+    #         x_t.requires_grad_(True)
+    #         fn_noise = th.sum(fn(x_t, t)*noise)
+    #         grad_fn_noise = th.autograd.grad(fn_noise, x_t)[0]
+    #     x_t.requires_grad_(False)
+    #     return th.sum(grad_fn_noise * noise, dim=tuple(range(1, len(x_t.shape))))
 
     return div_fn
 
@@ -272,7 +263,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 epsilon = th.randint_like(data, low=0, high=2).float() * 2 - 1.
             else:
                 raise NotImplementedError(f"Hutchinson type {hutchinson_type} unknown.")
-
+            
             def ode_func(t, x):
                 sample = from_flattened_numpy(x[:-shape[0]], shape).to(data.device).type(th.float32)
                 vec_t = th.ones(sample.shape[0], device=sample.device) * t
@@ -281,7 +272,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 return np.concatenate([drift, logp_grad], axis=0)
 
             init = np.concatenate([to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
-            solution = integrate.solve_ivp(ode_func, (eps, sde.T), init, rtol=rtol, atol=atol, method=method)
+            solution = integrate.solve_ivp(ode_func, (eps, sde.T-1e-10), init, rtol=rtol, atol=atol, method=method)
             nfe = solution.nfev
             zp = solution.y[:, -1]
             z = from_flattened_numpy(zp[:-shape[0]], shape).to(data.device).type(th.float32)

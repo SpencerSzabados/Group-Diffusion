@@ -11,7 +11,7 @@
     (https://github.com/yang-song/score_sde_pytorch/blob/main/run_lib.py)
 
     Launch command:
-    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 128 --batch_size 128 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/model014000.pt --data_dir /home/datasets/c4test --num_samples 1 --sde VESDE 
+    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 128 --batch_size 128 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/model014000.pt --data_dir /home/datasets/c4test_rot90 --num_samples 1 --sde VESDE 
 """
 
 import io
@@ -103,20 +103,17 @@ def main():
     sigma_min = 0.002 or args.sigma_min
     num_timesteps = 40 or args.num_timesteps
     sampling_eps = 1e-5 or args.sampling_eps
-    bpd_num_repeats = 5 # Go over the dataset 5 times when computing likelihood 
+    bpd_num_repeats = 1 # Go over the dataset 5 times when computing likelihood 
 
     if args.sde == "VESDE":
         # Varaince exploding SDE
         sde = sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=num_timesteps)
         print("sde.T: "+str(sde.T)) # DEBUG
         print("sde.N: "+str(sde.N)) # DEBUG
-    elif args.sde == "VPSDE":
-        # Variance perserving SDE
-        sde = sde_lib.VPSDE(sigma_min=sigma_min, sigma_max=sigma_max, N=num_timesteps)
     else:
         NotImplementedError(f"SDE not implemented")
 
-    likelihood_fn = likelihood.get_likelihood_fn(sde, get_data_inverse_scaler(), eps=1.) # DEBUG: remove esp argument
+    likelihood_fn = likelihood.get_likelihood_fn(sde, get_data_inverse_scaler(), eps=0.1, rtol=0.001, atol=0.001) # DEBUG: remove esp argument
 
     # Create diffusion model and load checkpoint state
     logger.log("\nCreating model and diffusion...")
@@ -157,8 +154,9 @@ def main():
             bpd_round_id = batch_id+int(args.num_samples)*i
             # Save bits/dim to disk
             ## DEBUG
-            print(bpd)
-            print(nfe)
+            print("NFE: "+str(nfe))
+            print("NLL mean: "+str(np.mean(bpd)))
+            print("NLL var: "+str(np.var(bpd)))
             
 
 if __name__=="__main__":
