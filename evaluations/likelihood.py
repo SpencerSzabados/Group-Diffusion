@@ -138,7 +138,7 @@ def get_model_fn(model, train=False):
     """
     if not train:
         karras_score = Karras_Score(model=model)
-        print(th.norm(karras_score.get_score(x, labels)), flush=True) # DEBUG
+        print("Karras score norm: "+str(th.norm(karras_score.get_score(x, labels))), flush=True) # DEBUG
         return karras_score.get_score(x, labels)
     else:
         raise NotImplementedError(f"NLL computation is only implemented for inference not during training.")
@@ -168,8 +168,8 @@ def get_score_fn(sde, model, train=False, continuous=False):
             labels = sde.T - t
             labels *= sde.N - 1
             labels = th.round(labels).long() 
-        print("label: "+str(labels)) # DEBUG
-        print("X: "+str(x[0][0][0])) # DEBUG
+        # print("label: "+str(labels)) # DEBUG
+        # print("X: "+str(x[0][0][0])) # DEBUG
         score = model_fn(x, labels)
 
         return score
@@ -265,6 +265,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 raise NotImplementedError(f"Hutchinson type {hutchinson_type} unknown.")
             
             def ode_func(t, x):
+                print("ode_func t: "+str(t)) # DEBUG
                 sample = from_flattened_numpy(x[:-shape[0]], shape).to(data.device).type(th.float32)
                 vec_t = th.ones(sample.shape[0], device=sample.device) * t
                 drift = to_flattened_numpy(drift_fn(model, sample, vec_t))
@@ -272,7 +273,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 return np.concatenate([drift, logp_grad], axis=0)
 
             init = np.concatenate([to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
-            solution = integrate.solve_ivp(ode_func, (eps, sde.T-1e-10), init, rtol=rtol, atol=atol, method=method)
+            solution = integrate.solve_ivp(ode_func, (eps, sde.T-1e-5), init, rtol=rtol, atol=atol, method=method)
             nfe = solution.nfev
             zp = solution.y[:, -1]
             z = from_flattened_numpy(zp[:-shape[0]], shape).to(data.device).type(th.float32)
