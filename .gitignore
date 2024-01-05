@@ -1,7 +1,8 @@
-reference_code
+reference_code/
 **__pycache__
 *.npy
 *.pyc
+*.cpython-310
 *~
 *.JPEG
 tmp*

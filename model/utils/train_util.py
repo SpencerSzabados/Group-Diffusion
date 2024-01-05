@@ -186,13 +186,14 @@ class TrainLoop:
                 #       rather than the hard coded values used currently.
                 #       This sould be modified if training on a dataset of different resolution.
                 logger.log("generating samples...")
-                generator = get_generator('determ', 64, 42)
+                
+                generator = get_generator('determ', 40, 42)
                 sample = karras_sample(
                     self.diffusion,
                     self.model,
-                    (64, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
+                    (40, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
                     steps=100,
-                    model_kwargs={},
+                    model_kwargs={'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)},
                     device=distribute_util.dev(),
                     clip_denoised=True,
                     sampler='euler',
@@ -207,7 +208,7 @@ class TrainLoop:
                 )
                 # Save the generated sample images
                 logger.log("sampled tensor shape: "+str(sample.shape))
-                grid_img = torchvision.utils.make_grid(sample, nrow = 8, normalize = True)
+                grid_img = torchvision.utils.make_grid(sample, nrow = 10, normalize = True)
                 torchvision.utils.save_image(grid_img, f'tmp_imgs/{self.step}.pdf')
 
             if self.step % self.log_interval == 0:

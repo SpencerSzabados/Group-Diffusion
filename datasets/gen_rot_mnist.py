@@ -10,6 +10,10 @@
 
     Implementaion is based on:
     (https://github.com/david-knigge/separable-group-convolutional-networks/blob/main/datasets/mnist_rot.py)
+
+    This file only generates a dataset that contains 12,000 images, so all 1% figures reported in the paper
+    are computed based on the number of samples requred for 1% of 60,000 directly in order to keep comparison
+    fair throught.
 """
 
 
@@ -27,14 +31,14 @@ from torchvision.datasets.utils import download_and_extract_archive
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/rot_mnist/"
+data_dir = "/home/sszabados/datasets/rot_mnist_3000/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
                  "0f9a947ff3d30e95cd685462cbf3b847")]
 
 
-def gen_rot_mnist():
+def gen_rot_mnist(samples=600):
     """Download the MNIST data if it doesn't exist in processed_folder already."""
     
     os.makedirs(raw_dir, exist_ok=True)
@@ -73,14 +77,16 @@ def gen_rot_mnist():
         th.save(test_set, f)
 
     print("Generating label_index.JPG image training data...")
-    for i in range(len(train_val_labels)):
+    print("Creating "+str(min(samples, len(train_val_labels)))+" many images...")
+    for i in range(min(samples, len(train_val_labels))):
         image = Image.fromarray(train_val_data[i].numpy())
         target = train_val_labels[i]
         image.save(os.path.join(data_dir, f"{target}_{i}.JPEG"))
+    print("Finished.")
        
 
 def main():
-    gen_rot_mnist()
+    gen_rot_mnist(samples=3000)
 
 
 if __name__ == '__main__':
