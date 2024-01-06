@@ -37,8 +37,6 @@ class Karras_Score:
         s_tmax=float("inf"),
         s_noise=1.0,
         weight_schedule="karras",
-        distillation=False,
-        loss_norm="lpips",
         device='cpu'
     ):
         self.model = model
@@ -60,11 +58,7 @@ class Karras_Score:
         self.max_inv_rho = self.sigma_max ** (1 / self.rho)
 
         self.sigmas = self.get_sigmas_karras(self.num_timesteps)
-
-        self.loss_norm = loss_norm
-        if loss_norm == "lpips":
-            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")
-        self.distillation = distillation
+        # self.sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), self.num_timesteps)).to(self.device)
 
     def append_dims(self, x, target_dims):
         """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
@@ -85,8 +79,8 @@ class Karras_Score:
         return self.append_zero(sigmas).to(self.device)
     
     def calculate_sigma_karras(self, t):
-       sigma = (self.max_inv_rho + t*(self.min_inv_rho-self.max_inv_rho))**self.rho
-       return sigma
+        sigma = (self.max_inv_rho + t*(self.min_inv_rho-self.max_inv_rho))**self.rho
+        return sigma
 
     def get_scalings(self, sigma):
         c_skip = self.sigma_data**2/(sigma**2+self.sigma_data**2)
@@ -94,24 +88,21 @@ class Karras_Score:
         c_in = 1/(sigma**2+self.sigma_data**2)**0.5
         return c_skip, c_out, c_in
 
-    def denoise_score(self, x_t, sigma):
+    def denoise_score(self, x, t):
         """Return the score (gradient) of denoising diffusion model"""
-
-        c_skip, c_out, c_in = [self.append_dims(x, x_t.ndim) for x in self.get_scalings(sigma)]
+        s_in = x.new_ones([x.shape[0]])
+        sigma = s_in*self.sigmas[t]
+        noise = th.randn_like(x)
+        x_t = x + noise * self.append_dims(sigma[0], x.ndim)
+        c_skip, c_out, c_in = [self.append_dims(xx, x_t.ndim) for xx in self.get_scalings(sigma)]
         rescaled_t = 1000*0.25*th.log(sigma+1e-44)
         model_output = self.model(c_in*x_t, rescaled_t)
         denoised = c_out*model_output+c_skip*x_t
-        score = (x_t-denoised)/self.append_dims(sigma, x_t.ndim)
-
+        score = (x-denoised)/self.append_dims(sigma, x_t.ndim)
         return score
     
     def get_score(self, x, label):
-    #    sigma = self.calculate_sigma_karras(label)
-       s_in = x.new_ones([x.shape[0]])
-       sigma = self.sigmas[label[0]]
-       noise = th.randn_like(x)
-       x_t = x + noise * self.append_dims(sigma, x.ndim)
-       return self.denoise_score(x_t, sigma*s_in)
+       return self.denoise_score(x, label[0])
     
 
 def get_model_fn(model, train=False):
@@ -273,7 +264,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 return np.concatenate([drift, logp_grad], axis=0)
 
             init = np.concatenate([to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
-            solution = integrate.solve_ivp(ode_func, (eps, sde.T-1e-5), init, rtol=rtol, atol=atol, method=method)
+            solution = integrate.solve_ivp(ode_func, (eps, sde.T), init, rtol=rtol, atol=atol, method=method)
             nfe = solution.nfev
             zp = solution.y[:, -1]
             z = from_flattened_numpy(zp[:-shape[0]], shape).to(data.device).type(th.float32)
