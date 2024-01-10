@@ -53,6 +53,19 @@ class Vertical_Symmetric(nn.Module):
         return X * self.upper_mask + th.flip(X, dims=[-2]) * (1 - self.upper_mask)
     
 
+class Vertical_Symmetric(nn.Module):
+    def forward(self, X):
+        _, _, h, w = X.shape
+        upper_channel = h//2
+        if not hasattr(self, 'upper_mask'):
+            self.upper_mask = nn.Parameter(th.tensor([1.0]* upper_channel + [0.0] * (h - upper_channel), device = X.device)[None, None, :, None], requires_grad = False)
+
+        return X * self.upper_mask + th.flip(X, dims=[-2]) * (1 - self.upper_mask)
+
+    def right_inverse(self, A):
+        return A
+    
+
 class Horizontal_Symmetric(nn.Module):
     def forward(self, X):
         _, _, h, w = X.shape
@@ -60,6 +73,9 @@ class Horizontal_Symmetric(nn.Module):
         if not hasattr(self, 'left_mask'):
             self.left_mask = nn.Parameter(th.tensor([1.0]* left_channel + [0.0] * (w - left_channel), device = X.device)[None, None, None, :], requires_grad = False)
         return X * self.left_mask + th.flip(X, dims=[-1]) * (1 - self.left_mask)
+    
+    def right_inverse(self, A):
+        return A
 
 
 class C4_Symmetric(nn.Module):
@@ -69,9 +85,47 @@ class C4_Symmetric(nn.Module):
         upper_channel = h//2
         if h % 2 == 0:
             
-            if not hasattr(self, 'up_left_mask'):
-                tmp_ = th.tensor([[1]*upper_channel + [0] * ( h - upper_channel)], device = X.device)
-                self.up_left_mask = nn.Parameter((tmp_.T @ tmp_)[None, None, :, :], requires_grad = False)
+            tmp_ = th.tensor([[1]*upper_channel + [0] * ( h - upper_channel)], device = X.device)
+            up_left_mask = nn.Parameter((tmp_.T @ tmp_)[None, None, :, :], requires_grad = False)
+            
+            X_ = X * up_left_mask
+            X__ = None
+            for rot_ in range(3):
+                X__ = th.rot90(X_, 1, [-1, -2]) if X__ is None else  th.rot90(X__, 1, [-1, -2])
+                X_ = X_ + X__
+            return X_
+        else:
+            tmp_A = th.tensor([[1.0]*upper_channel + [0.0] * ( h - upper_channel)], device = X.device)
+            tmp_B = th.tensor([[1.0]*(upper_channel + 1) + [0.0] * ( h - (upper_channel + 1))], device = X.device)
+            up_left_mask = nn.Parameter((tmp_A.T @ tmp_B)[None, None, :, :], requires_grad=False)
+
+            center_elem_mask = th.zeros(h, w, device = X.device)
+            center_elem_mask[h//2, h//2] = 1.0
+            center_elem_mask = nn.Parameter(center_elem_mask, requires_grad=False)
+
+            X_ = X * center_elem_mask.to(X.device)
+            X__ = None
+            for rot_ in range(4):
+                X__ = th.rot90(X * up_left_mask.to(X.device), 1, [-1, -2]) if X__ is None else th.rot90(X__, 1, [-1, -2])
+                X_ = X_ + X__
+            return X_
+        
+    def right_inverse(self, A):
+        return A
+        
+
+class D4_Symmetric(nn.Module):
+    def forward(self, X):
+        # make the weights symmetric 
+        X = X.triu() + X.triu(1).transpose(-1, -2)
+
+        _, _, h, w = X.shape
+        assert h == w, 'the initialization assumes h == w'
+        upper_channel = h//2
+        if h % 2 == 0:
+            
+            tmp_ = th.tensor([[1]*upper_channel + [0] * ( h - upper_channel)], dtype = X.dtype, device = X.device)
+            up_left_mask = (tmp_.T @ tmp_)[None, None, :, :]
             
             X_ = X * self.up_left_mask
             X__ = None
@@ -80,22 +134,22 @@ class C4_Symmetric(nn.Module):
                 X_ = X_ + X__
             return X_
         else:
-            if not hasattr(self, 'up_left_mask'):
-                tmp_A = th.tensor([[1.0]*upper_channel + [0.0] * ( h - upper_channel)], device = X.device)
-                tmp_B = th.tensor([[1.0]*(upper_channel + 1) + [0.0] * ( h - (upper_channel + 1))], device = X.device)
-                self.up_left_mask = nn.Parameter((tmp_A.T @ tmp_B)[None, None, :, :], requires_grad=False)
+            tmp_A = th.tensor([[1.0]*upper_channel + [0.0] * ( h - upper_channel)], dtype = X.dtype, device = X.device)
+            tmp_B = th.tensor([[1.0]*(upper_channel + 1) + [0.0] * ( h - (upper_channel + 1))], dtype = X.dtype, device = X.device)
+            up_left_mask =(tmp_A.T @ tmp_B)[None, None, :, :]
 
-            if not hasattr(self, 'center_elem_mask'):
-                center_elem_mask = th.zeros(h, w, device = X.device)
-                center_elem_mask[h//2, h//2] = 1.0
-                self.center_elem_mask = nn.Parameter(center_elem_mask, requires_grad=False )
+            center_elem_mask = th.zeros(h, w, dtype = X.dtype, device = X.device)
+            center_elem_mask[h//2, h//2] = 1.0
 
-            X_ = X * self.center_elem_mask.to(X.device)
+            X_ = X * center_elem_mask
             X__ = None
             for rot_ in range(4):
-                X__ = th.rot90(X * self.up_left_mask.to(X.device), 1, [-1, -2]) if X__ is None else th.rot90(X__, 1, [-1, -2])
+                X__ = th.rot90(X * up_left_mask, 1, [-1, -2]) if X__ is None else th.rot90(X__, 1, [-1, -2])
                 X_ = X_ + X__
             return X_
+    
+    def right_inverse(self, A):
+        return A
 
 # ---[ ]
 
@@ -315,10 +369,8 @@ class KernelGConv2d(nn.Module):
         The parameter value 'Z2' specifies the data being convolved is from the Z^2 plane (discrete mesh).
     :parm g_output: One of ('C4', 'D4'). What kind of transformations to use (rotations or roto-reflections).
         The value of g_input of the subsequent layer should match the value of g_output from the previous.
-    :parm in_channels: The number of input channels. Based on the input group action the number of channels 
-        used is equal to nti*in_channels.
-    :parm out_channels: The number of output channels. Based on the output group action the number of channels
-        used is equal to nto*out_channels.
+    :parm in_channels: The number of input channels. 
+    :parm out_channels: The number of output channels.
     """
 
     def __init__(self, 
@@ -444,12 +496,33 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
                         g_input, suffix_ = g_input.split('_')
                 else:
                     suffix = None
-                # Test if kernel method is desired
+                # If simple kernel symmetric layer  is desired
                 if suffix == 'K':
-                    logger.info(f'Initializing weight tied kernelgconv equivariant convolution layer: {g_input, g_output}')
+                    logger.info(f'Initializing K weight tied equiv. layer: {g_input, g_output}')
                     return KernelGConv2d(g_input, g_output, *args, **kwargs)
+                # If masking kernel symmetric kerel layer is desired 
+                elif suffix == 'G':
+                    logger.info(f'Initializing G weight tied equiv. layer: {g_input, g_output}')
+                    if g_output == 'H':
+                        layer = nn.Conv2d(*args, **kwargs)
+                        parametrize.register_parametrization(layer, "weight", Horizontal_Symmetric())  
+                        return layer 
+                    elif g_output == 'V':
+                        layer = nn.Conv2d(*args, **kwargs)
+                        parametrize.register_parametrization(layer, "weight", Vertical_Symmetric())   
+                        return layer
+                    elif g_output == 'C4':
+                        layer = nn.Conv2d(*args, **kwargs)
+                        parametrize.register_parametrization(layer, "weight", C4_Symmetric())
+                        return layer   
+                    elif g_output == 'D4':
+                        layer = nn.Conv2d(*args, **kwargs)
+                        # layer.weight.data = layer.weight.data.half()
+                        parametrize.register_parametrization(layer, "weight", D4_Symmetric())  
+                        return layer
+                # If GrouPy equivariant layer is desired
                 elif suffix == None:
-                    logger.info(f'Initializing splitgconv equivariant convolution layer: {g_input, g_output}')
+                    logger.info(f'Initializing splitgconv equiv. layer: {g_input, g_output}')
                     return SplitGConv2d(g_input, g_output, *args, **kwargs)
                 else:
                     raise NotImplementedError(f"unsupported g_input g_ouput combination in gconv_nd: {g_input, g_output}\n or unsupported suffix: {suffix}")

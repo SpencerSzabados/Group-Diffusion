@@ -1,6 +1,10 @@
 """
-    Generate a large batch of image samples from a model and save them as a large
-    numpy array. This can be used to produce samples for FID evaluation.
+    EDM image (generation) sampling script used for generate a large batch of image
+    samples from a model and save them as a large numpy array. This can be used to 
+    produce samples for FID evaluation.
+
+    TODO: Add command line argument for generating either a .npz file archive or
+          directory full of .JPEG images.
 """
 
 import os
@@ -25,25 +29,20 @@ from model.karras_diffusion import karras_sample
 
 def create_argparser():
     defaults = dict(
-        data_dir="",
-        g_equiv=False,
-        g_input=None,
-        g_output=None,
-        schedule_sampler="uniform",
-        lr=1e-4,
-        weight_decay=0.0,
-        lr_anneal_steps=0,
-        global_batch_size=2048,
-        batch_size=-1,
-        microbatch=-1,      # -1 disables microbatches
-        ema_rate="0.9999",  # comma-separated list of EMA values
-        log_interval=10,
-        save_interval=10000,
-        resume_checkpoint="",
-        use_fp16=False,
-        fp16_scale_growth=1e-3,
-        user_id='dummy',
-        slurm_id='-1'
+        training_mode="edm",
+        generator="determ",
+        clip_denoised=True,
+        num_samples=10000,
+        batch_size=16,
+        sampler="heun",
+        s_churn=0.0,
+        s_tmin=0.0,
+        s_tmax=float("inf"),
+        s_noise=1.0,
+        steps=40,
+        model_path="",
+        seed=42,
+        ts="",
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
@@ -63,12 +62,10 @@ def main():
         distillation = False
 
     logger.log("creating model and diffusion...")
-
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys()),
         distillation=distillation,
     )
-
     model.load_state_dict(
         distribute_util.load_state_dict(args.model_path, map_location="cpu")
     )

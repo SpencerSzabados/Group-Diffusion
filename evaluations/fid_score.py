@@ -30,7 +30,12 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+Example launch command:
+python fid_score --
 """
+
+
 import os
 import pathlib
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
@@ -51,10 +56,12 @@ except ImportError:
     def tqdm(x):
         return x
 
-from .inception import InceptionV3
+from inception import InceptionV3
 
+## Global arguments
+#------------------------------------------------
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-parser.add_argument('--batch-size', type=int, default=50,
+parser.add_argument('--batch_size', type=int, default=50,
                     help='Batch size to use')
 parser.add_argument('--num-workers', type=int,
                     help=('Number of processes to use for data loading. '
@@ -65,20 +72,45 @@ parser.add_argument('--dims', type=int, default=2048,
                     choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
                     help=('Dimensionality of Inception features to use. '
                           'By default, uses pool3 features'))
+parser.add_argument('--img_size', type=int, default=28,
+                    help="Size to crop images to while computing fid. Should be set to the full image resulution when possible.")
 parser.add_argument('--save-stats', action='store_true',
                     help=('Generate an npz archive from a directory of samples. '
                           'The first path is used as input and the second as output.'))
-parser.add_argument('path', type=str, nargs=2,
+parser.add_argument('--path', type=str, nargs=2,
                     help=('Paths to the generated images or '
                           'to .npz statistic files'))
+parser.add_argument('--eqv', type=str, default='Z2',
+                    help="Equivariant group prior.")
 
 IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
                     'tif', 'tiff', 'webp', "JPEG"}
 
 
+def center_crop_arr(pil_image, image_size):
+    # We are not on a new enough PIL to support the `reducing_gap`
+    # argument, which uses BOX downsampling at powers of two first.
+    # Thus, we do it by hand to improve downsample quality.
+    while min(*pil_image.size) >= 2 * image_size:
+        pil_image = pil_image.resize(
+            tuple(x // 2 for x in pil_image.size), resample=Image.BOX
+        )
+
+    scale = image_size / min(*pil_image.size)
+    pil_image = pil_image.resize(
+        tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
+    )
+
+    arr = np.array(pil_image)
+    crop_y = (arr.shape[0] - image_size) // 2
+    crop_x = (arr.shape[1] - image_size) // 2
+    return arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size]
+
+
 class ImagePathDataset(torch.utils.data.Dataset):
-    def __init__(self, files, transforms=None):
+    def __init__(self, files, img_size, transforms=None):
         self.files = files
+        self.img_size = img_size
         self.transforms = transforms
 
     def __len__(self):
@@ -87,12 +119,16 @@ class ImagePathDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         path = self.files[i]
         img = Image.open(path).convert('RGB')
+
+        img = center_crop_arr(img, self.img_size)
+        # img = img.resize((self.img_size, self.img_size), Image.LANCZOS)
+
         if self.transforms is not None:
             img = self.transforms(img)
         return img
 
 
-def get_activations(files, model, batch_size=50, dims=2048, device='cpu',
+def get_activations(files, model, batch_size=64, dims=2048, img_size =32, device='cpu',
                     num_workers=1, eqv = 'Z2', gen_op = None):
     """Calculates the activations of the pool_3 layer for all images.
 
@@ -154,7 +190,7 @@ def get_activations(files, model, batch_size=50, dims=2048, device='cpu',
                'Setting dl_batch_size to data size'))
         dl_batch_size = len(files)
 
-    dataset = ImagePathDataset(files, transforms=TF.ToTensor())
+    dataset = ImagePathDataset(files, img_size, transforms=TF.ToTensor())
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=dl_batch_size,
                                              shuffle=False,
@@ -245,8 +281,8 @@ def calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
             + np.trace(sigma2) - 2 * tr_covmean)
 
 
-def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
-                                    device='cpu', num_workers=1, eqv = 'Z2', gen_op = None):
+def calculate_activation_statistics(files, model, batch_size=64, dims=2048, img_size=28,
+                                    device='cpu', num_workers=1, eqv='Z2', gen_op=None):
     """Calculation of the statistics used by the FID.
     Params:
     -- files       : List of image files paths
@@ -264,13 +300,14 @@ def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
     -- sigma : The covariance matrix of the activations of the pool_3 layer of
                the inception model.
     """
-    act = get_activations(files, model, batch_size, dims, device, num_workers, eqv = eqv, gen_op = gen_op)
+    act = get_activations(files, model, batch_size, dims, img_size, device, num_workers, eqv = eqv, gen_op = gen_op)
     mu = np.mean(act, axis=0)
     sigma = np.cov(act, rowvar=False)
     return mu, sigma
 
-def compute_statistics_of_path(path, model, batch_size, dims, device,
-                               num_workers=1, eqv = 'Z2', gen_op = None):
+
+def compute_statistics_of_path(path, model, batch_size, dims, img_size, device,
+                               num_workers=1, eqv='Z2', gen_op=None):
     if path.endswith('.npz'):
         with np.load(path) as f:
             m, s = f['mu'][:], f['sigma'][:]
@@ -279,12 +316,12 @@ def compute_statistics_of_path(path, model, batch_size, dims, device,
         files = sorted([file for ext in IMAGE_EXTENSIONS
                        for file in path.glob('*.{}'.format(ext))])
         m, s = calculate_activation_statistics(files, model, batch_size,
-                                               dims, device, num_workers, eqv = eqv, gen_op = gen_op)
+                                               dims, img_size, device, num_workers, eqv=eqv, gen_op = gen_op)
 
     return m, s
 
 
-def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1, eqv = 'Z2'):
+def calculate_fid_given_paths(paths, batch_size, device, dims, img_size, num_workers=1, eqv='Z2'):
     """Calculates the FID of two paths"""
     paths = copy.deepcopy(paths)
 
@@ -298,14 +335,14 @@ def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1, eq
 
     model = InceptionV3([block_idx]).to(device)
 
-    cache_file_dir = os.path.join(paths[0], f'cache_dims_{dims}_{eqv}.npz')
+    cache_file_dir = os.path.join(paths[0], f'cache_dims_{dims}_size_{img_size}_{eqv}.npz')
 
-    m1, s1 = compute_statistics_of_path_cache(paths[0], cache_file_dir, model, batch_size, dims, device, num_workers, eqv)
+    m1, s1 = compute_statistics_of_path_cache(paths[0], cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv)
 
-    gen_cache_file_dir = os.path.join(paths[1], f'cache_dims_{dims}_gen_Z2.npz')
+    gen_cache_file_dir = os.path.join(paths[1], f'cache_dims_{dims}_size_{img_size}_gen_Z2.npz')
 
     m2, s2 = compute_statistics_of_path(paths[1], model, batch_size,
-                                        dims, device, num_workers, eqv = 'Z2')
+                                        dims, img_size, device, num_workers, eqv='Z2') # eqv='Z2' since we assume the model is generating a eqv invariant distribution
     
     np.savez(gen_cache_file_dir, mu=m2, sigma=s2)
     
@@ -314,18 +351,18 @@ def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1, eq
     return fid_value
 
 
-def compute_statistics_of_path_cache(path, cache_file_dir, model, batch_size, dims, device, num_workers, eqv, gen_op = None):
+def compute_statistics_of_path_cache(path, cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv, gen_op = None):
     if os.path.exists(cache_file_dir):
         m, s = compute_statistics_of_path(cache_file_dir, model, batch_size,
-                                        dims, device, num_workers, eqv = eqv, gen_op = gen_op)
+                                        dims, img_size, device, num_workers, eqv = eqv, gen_op = gen_op)
     else:
         m, s = compute_statistics_of_path(path, model, batch_size,
-                                        dims, device, num_workers, eqv = eqv, gen_op = gen_op)
+                                        dims, img_size, device, num_workers, eqv = eqv, gen_op = gen_op)
         np.savez(cache_file_dir, mu=m, sigma=s)
     return m, s
 
 
-def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1, eqv = 'Z2'):
+def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1, eqv='Z2'):
     # assert eqv != 'Z2', f'eqv should not be Z2'
     if eqv == 'Z2':
         return -1
@@ -399,7 +436,7 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
     return inv_fid_list
 
 
-def save_fid_stats(paths, batch_size, device, dims, num_workers=1):
+def save_fid_stats(paths, batch_size, dims, img_size, device, num_workers=1, eqv='Z2'):
     """Calculates the FID of two paths"""
     if not os.path.exists(paths[0]):
         raise RuntimeError('Invalid path: %s' % paths[0])
@@ -414,7 +451,7 @@ def save_fid_stats(paths, batch_size, device, dims, num_workers=1):
     print(f"Saving statistics for {paths[0]}")
 
     m1, s1 = compute_statistics_of_path(paths[0], model, batch_size,
-                                        dims, device, num_workers)
+                                        dims, img_size, device, num_workers, eqv=eqv)
 
     np.savez_compressed(paths[1], mu=m1, sigma=s1)
 
@@ -441,14 +478,22 @@ def main():
         num_workers = args.num_workers
 
     if args.save_stats:
-        save_fid_stats(args.path, args.batch_size, device, args.dims, num_workers)
+        save_fid_stats(paths=args.path,
+                        batch_size=args.batch_size,
+                        device=device,
+                        dims=args.dims,
+                        img_size=args.img_size,
+                        num_workers=num_workers,
+                        eqv=args.eqv)
         return
 
-    fid_value = calculate_fid_given_paths(args.path,
-                                          args.batch_size,
-                                          device,
-                                          args.dims,
-                                          num_workers)
+    fid_value = calculate_fid_given_paths(paths=args.path,
+                                          batch_size=args.batch_size,
+                                          device=device,
+                                          dims=args.dims,
+                                          img_size=args.img_size,
+                                          num_workers=num_workers,
+                                          eqv=args.eqv)
     print('FID: ', fid_value)
 
 

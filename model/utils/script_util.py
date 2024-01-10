@@ -9,7 +9,7 @@ from ..karras_diffusion import KarrasDenoiser
 from ..unet import UNetModel
 import numpy as np
 
-NUM_CLASSES = 1000
+NUM_CLASSES = 10 # Default 1000
 
 
 def cm_train_defaults():

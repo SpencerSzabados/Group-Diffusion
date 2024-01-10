@@ -31,7 +31,7 @@ from torchvision.datasets.utils import download_and_extract_archive
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/rot_mnist_3000/"
+data_dir = "/home/sszabados/datasets/rot_mnist_6000/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
@@ -70,14 +70,14 @@ def gen_rot_mnist(samples=600):
     test_set = (test_data, test_labels)
     print("Finished downloading files.")
 
-    print("Saving .pt files")
+    print("Saving .pt files...")
     with open(os.path.join(processed_dir, "training.pt"), "wb") as f:
         th.save(training_set, f)
     with open(os.path.join(processed_dir, "test.pt"), "wb") as f:
         th.save(test_set, f)
 
     print("Generating label_index.JPG image training data...")
-    print("Creating "+str(min(samples, len(train_val_labels)))+" many images...")
+    print("Creating "+str(min(samples, len(train_val_labels)))+" images...")
     for i in range(min(samples, len(train_val_labels))):
         image = Image.fromarray(train_val_data[i].numpy())
         target = train_val_labels[i]
@@ -86,7 +86,7 @@ def gen_rot_mnist(samples=600):
        
 
 def main():
-    gen_rot_mnist(samples=3000)
+    gen_rot_mnist(samples=6000)
 
 
 if __name__ == '__main__':

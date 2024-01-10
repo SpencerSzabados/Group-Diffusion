@@ -21,10 +21,13 @@ import os
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+import torch as th
+import torchvision
+from torchvision import transforms
 
 
 # Directory 
-DATA_PATH = '/home/sszabados/datasets/c4test_rot90'
+DATA_PATH = '/home/sszabados/Group-Diffusion/tmp_imgs/c4test_rot90'
 
 # Generation paramters
 HIGHT_WIDTH = 28 # Resolution of generated images
@@ -59,21 +62,24 @@ def gen_c4test_samples():
         for j in range(int(DIVIDER*HIGHT_WIDTH*0.5),int(DIVIDER*HIGHT_WIDTH)):
             image[j,i] = colour
     image = Image.fromarray(image).convert('RGB')
+            
+    transform = transforms.Compose([transforms.ToTensor(),])
+    image = transform(image)
+    samples = th.zeros(size=(4,3,HIGHT_WIDTH,HIGHT_WIDTH))
+    samples[0,:,:,:] = image
+    samples[1,:,:,:] = th.rot90(image, k=1, dims=[-1,-2])
+    samples[2,:,:,:] = th.rot90(image, k=2, dims=[-1,-2])
+    samples[3,:,:,:] = th.rot90(image, k=3, dims=[-1,-2])
 
-    # Create a new image with the determined size
-    result_image = Image.new("RGB", (4*HIGHT_WIDTH+20, HIGHT_WIDTH), "white")
-
-    # Paste each image side by side
-    result_image.paste(image, (0, 0))
-    result_image.paste(image.rotate(90, expand=True), (HIGHT_WIDTH+5, 0))
-    result_image.paste(image.rotate(180, expand=True), (2*HIGHT_WIDTH+5, 0))
-    result_image.paste(image.rotate(270, expand=True), (3*HIGHT_WIDTH+5, 0))
-    result_image.save('/home/sszabados/Group-Diffusion/tmp_dataset_samples/c4/c4sample.JPEG')
-
+    img = torchvision.utils.make_grid(image, nrow=0, normalize=True, padding=2, pad_value=0)
+    torchvision.utils.save_image(img, '/home/sszabados/Group-Diffusion/tmp_dataset_samples/c4test_ref.pdf')
+    grid_img = torchvision.utils.make_grid(samples, nrow=4, normalize=True, padding=2, pad_value=0)
+    torchvision.utils.save_image(grid_img, '/home/sszabados/Group-Diffusion/tmp_dataset_samples/c4test_rot.pdf')
+    
 
 def main():
-    gen_c4test(rot=90)
-    # gen_c4test_samples()
+    # gen_c4test(rot=90)
+    gen_c4test_samples()
 
 
 if __name__=="__main__":
