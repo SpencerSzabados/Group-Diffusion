@@ -88,19 +88,39 @@ class Karras_Score:
         c_in = 1/(sigma**2+self.sigma_data**2)**0.5
         return c_skip, c_out, c_in
 
+    # def denoise_score(self, x, t):
+    #     """Return the score (gradient) of denoising diffusion model"""
+    #     s_in = x.new_ones([x.shape[0]])
+    #     sigma = s_in*self.sigmas[t]
+    #     noise = th.randn_like(x)
+    #     x_t = x+noise*self.append_dims(sigma[0], x.ndim)
+    #     c_skip, c_out, c_in = [self.append_dims(xx, x_t.ndim) for xx in self.get_scalings(sigma)]
+    #     rescaled_t = 1000*0.25*th.log(sigma+1e-44)
+    #     model_output = self.model(c_in*x_t, rescaled_t)
+    #     denoised = c_out*model_output+c_skip*x_t
+    #     score = (x-denoised)/self.append_dims(sigma,x.ndim)
+    #     return score
+    
     def denoise_score(self, x, t):
-        """Return the score (gradient) of denoising diffusion model"""
-        s_in = x.new_ones([x.shape[0]])
-        sigma = s_in*self.sigmas[t]
+        gamma = (
+            min(self.s_churn / (len(self.sigmas[t]) - 1), 2**0.5 - 1)
+            if self.s_tmin <= self.sigmas[t] <= self.s_tmax
+            else 0.0
+        )
+        sigma_hat = self.sigmas[t] * (gamma + 1)
         noise = th.randn_like(x)
-        x_t = x + noise * self.append_dims(sigma[0], x.ndim)
-        c_skip, c_out, c_in = [self.append_dims(xx, x_t.ndim) for xx in self.get_scalings(sigma)]
-        rescaled_t = 1000*0.25*th.log(sigma+1e-44)
+        if gamma > 0:
+            x_t = x + noise * (sigma_hat**2 - self.sigmas[t] ** 2) ** 0.5
+        else:
+            x_t = x
+        # denoised = denoiser(x, sigma_hat * s_in)
+        c_skip, c_out, c_in = [self.append_dims(xx, x.ndim) for xx in self.get_scalings(sigma_hat)]
+        rescaled_t = 1000*0.25*th.log(sigma_hat+1e-44)
         model_output = self.model(c_in*x_t, rescaled_t)
         denoised = c_out*model_output+c_skip*x_t
-        score = (x-denoised)/self.append_dims(sigma, x_t.ndim)
+        score = (x-denoised)/self.append_dims(sigma_hat,x.ndim)
         return score
-    
+
     def get_score(self, x, label):
        return self.denoise_score(x, label[0])
     
@@ -152,7 +172,7 @@ def get_score_fn(sde, model, train=False, continuous=False):
     model_fn = get_model_fn(model, train=train)
 
     def score_fn(x, t):
-        if continuous: # DEBUG what is the mean of teh marginal in terms of a label here? Should this not be the time?
+        if continuous: # DEBUG what is the mean of the marginal in terms of a label here? Should this not be the time?
             labels = sde.marginal_prob(th.zeros_like(x), t)[1]
         else:
             # For VE-trained models, t=0 corresponds to the highest noise level
@@ -223,7 +243,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
 
     def drift_fn(model, x, t):
         """The drift function of the reverse-time SDE."""
-        score_fn = get_score_fn(sde, model, train=False, continuous=False) # Default: continuous=True
+        score_fn = get_score_fn(sde, model, train=False, continuous=True) # Default: continuous=True
         # Probability flow ODE is a special case of Reverse SDE
         rsde = sde.reverse(score_fn, probability_flow=True)
         return rsde.sde(x, t)[0]
@@ -264,7 +284,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                 return np.concatenate([drift, logp_grad], axis=0)
 
             init = np.concatenate([to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
-            solution = integrate.solve_ivp(ode_func, (eps, sde.T), init, rtol=rtol, atol=atol, method=method)
+            solution = integrate.solve_ivp(ode_func, (eps, sde.T-eps), init, rtol=rtol, atol=atol, method=method)
             nfe = solution.nfev
             zp = solution.y[:, -1]
             z = from_flattened_numpy(zp[:-shape[0]], shape).to(data.device).type(th.float32)

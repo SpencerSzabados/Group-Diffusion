@@ -103,7 +103,7 @@ def main():
     sigma_min = 0.002 or args.sigma_min
     num_timesteps = 40 or args.num_timesteps
     sampling_eps = 1e-5 or args.sampling_eps
-    bpd_num_repeats = 1 # Go over the dataset 5 times when computing likelihood 
+    bpd_num_repeats = 1 # Average over the dataset this many times when computing likelihood 
 
     if args.sde == "VESDE":
         # Varaince exploding SDE
@@ -113,7 +113,7 @@ def main():
     else:
         NotImplementedError(f"SDE not implemented")
 
-    likelihood_fn = likelihood.get_likelihood_fn(sde, get_data_inverse_scaler(), eps=0.1, rtol=0.001, atol=0.001) # DEBUG: remove esp argument
+    likelihood_fn = likelihood.get_likelihood_fn(sde, get_data_inverse_scaler(), eps=0.1, rtol=0.001, atol=0.001, method='RK23') # DEBUG: remove esp argument
 
     # Create diffusion model and load checkpoint state
     logger.log("\nCreating model and diffusion...")
