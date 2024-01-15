@@ -8,6 +8,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 from piq import LPIPS
+import torchvision
 from torchvision.transforms import RandomCrop
 from .utils import distribute_util
 from .utils.nn import mean_flat, append_dims, append_zero
@@ -381,7 +382,11 @@ def karras_sample(
     else:
         sigmas = get_sigmas_karras(steps, sigma_min, sigma_max, rho, device=device)
 
-    x_T = generator.randn(*shape, device=device) * sigma_max
+    x_T = generator.randn(*shape, device=device)
+    print(x_T.shape)
+    # exit()
+    grid_img = torchvision.utils.make_grid(x_T[0], nrow = 1, normalize = True)
+    torchvision.utils.save_image(grid_img, f'tmp_imgs/x_T_samples.pdf')
 
     sample_fn = {
         "heun": sample_heun,
@@ -568,9 +573,10 @@ def sample_euler(
 ):
     """Implements Algorithm 2 (Heun steps) from Karras et al. (2022)."""
 
-
+    grid_img = torchvision.utils.make_grid(x, nrow = 1, normalize = True)
+    torchvision.utils.save_image(grid_img, f'tmp_imgs/x_sample.pdf')
     s_in = x.new_ones([x.shape[0]])
-    indices = range(len(sigmas) - 1)
+    indices = range(9)
 
     if progress:
         from tqdm.auto import tqdm
@@ -580,6 +586,8 @@ def sample_euler(
     for i in indices:
         sigma = sigmas[i]
         denoised = denoiser(x, sigma * s_in)
+        grid_img = torchvision.utils.make_grid(denoised, nrow = 1, normalize = True)
+        torchvision.utils.save_image(grid_img, f'tmp_imgs/sample_{i}_samples.pdf')
         d = to_d(x, sigma, denoised)
         if callback is not None:
             callback(

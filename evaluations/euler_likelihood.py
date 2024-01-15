@@ -13,6 +13,7 @@ import abc
 import torch as th
 import numpy as np
 from scipy import integrate
+import torchvision
 
 from piq import LPIPS
 
@@ -133,8 +134,8 @@ class VESDE(SDE):
         super().__init__(N)
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
-        # self.discrete_sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
-        self.discrete_sigmas = th.linspace(self.sigma_min, self.sigma_max, N)
+        self.discrete_sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
+        # self.discrete_sigmas = th.linspace(self.sigma_min, self.sigma_max, N)
         self.N = N
 
     @property
@@ -248,6 +249,7 @@ class Karras_Score:
 
     def to_d(self, x, sigma, denoised):
         """Converts a denoiser output to a Karras ODE derivative."""
+        print(f"sigma: {sigma}")
         return (x - denoised) / self.append_dims(sigma, x.ndim)
 
     def denoise(self, x_t, sigmas):
@@ -257,7 +259,11 @@ class Karras_Score:
         rescaled_t = 1000*0.25*th.log(sigmas + 1e-44)
         model_output = self.model(c_in*x_t, rescaled_t)
         denoised = c_out*model_output + c_skip*x_t
-        
+
+        print("c_out, c_skip: ", c_out.abs().max(), c_skip.abs().max())        
+        print("x_t.max: ", x_t.abs().max())      
+
+
         return model_output, denoised
 
     @th.no_grad()
@@ -269,20 +275,38 @@ class Karras_Score:
         noise = th.randn_like(x_t)
         x_t = x_t + noise*(self.sigmas[t]**2)**0.5
         _, denoised = self.denoise(x_t, self.sigmas[t]*s_in)
+        denoised = denoised.clamp(-1, 1)
+
+        print('1:', denoised.abs().max())
         d = self.to_d(x_t, self.sigmas[t]*s_in, denoised)
         
-        dt = self.sigmas[t]-self.sigmas[t-1]
+        dt = self.sigmas[t] - (0 if t - 1 < 0 else self.sigmas[t-1])
+
+
+        
+
+        print('-'* 100)
+        # # print(self.sigmas)
+
+        print(self.sigmas[t], self.sigmas[t-1], dt)
+
+        # print(t, t-1)
+
+        print('-'* 100)
+
+        
         x = x_t + d*dt
 
         return x, x_t, dt
 
     def denoise_score(self, x_t, t):
         s_in = x_t.new_ones([x_t.shape[0]])
-        noise = th.randn_like(x_t)
-        x_t = x_t + noise*(self.sigmas[t]**2)**0.5 
-        _, denoised = self.denoise(x_t, self.sigmas[t]*s_in)
+        model_output, denoised = self.denoise(x_t, self.sigmas[t]*s_in)
+
+        print(f"denoise abs max {denoised.abs().max()} mean {denoised.abs().mean()}")
+        print(f"model_output {model_output.abs().max()}")
+
         d = self.to_d(x_t, self.sigmas[t]*s_in, denoised)
-       
         return d
 
     def get_score(self, x, t):
@@ -352,9 +376,10 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
         def drift_fn(score_cl, x, t):
             """The drift function of the reverse-time SDE."""
             score_fn = get_score_fn(score_cl) # Default: continuous=True
-            rsde = score_cl.sde.reverse(score_fn, probability_flow=True) # Probability flow ODE is a special case of Reverse SDE
-            return rsde.discretize(x,t)[0]
-        
+            # rsde = score_cl.sde.reverse(score_fn, probability_flow=True) # Probability flow ODE is a special case of Reverse SDE
+            # return rsde.discretize(x,t)[0]
+            return score_fn(x,t)
+
         def div_fn(score_cl, x, t, epsilon):
             fn = lambda xx, tt: drift_fn(score_cl, xx, tt)
             with th.enable_grad():
@@ -373,30 +398,55 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             return (drift, logp_grad)
     
         with th.no_grad():
-            x_t = data
+            grid_img = torchvision.utils.make_grid(data, nrow = 1, normalize = True)
+            torchvision.utils.save_image(grid_img, f'tmp_imgs/data_input_samples.pdf')
+
+
+            x_t = data+th.randn_like(data)*score_cl.sigma_min
             logp = th.zeros((shape[0],)).to(data.device)
+            z = th.zeros(size=(score_cl.num_timesteps,shape[0],shape[1],shape[2],shape[3])).to(data.device)
+
             dist_t = 0
 
             # Run euler steps
-            for t in range(score_cl.num_timesteps-1,0,-1): 
+            for t in range(0,int(score_cl.num_timesteps)): 
+                grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
+                torchvision.utils.save_image(grid_img, f'tmp_imgs/{t}_samples.pdf')
+
                 _, _, dt = score_cl.euler_step(data,t)
 
                 diff = th.norm(data-x_t)
                 print("data diff: "+str(diff))
+                # print(dt)
+                # exit()
 
-                dt = dt/score_cl.sigma_max # Normalize time scale 
+                # dt = dt/score_cl.sigma_max # Normalize time scale 
                 dist_t += dt
                 print("dist_t: "+str(dist_t)) # DEBUG
                 
                 drift, logp_grad = ode_func(x_t,t) 
-            
-                x_t += drift*dt 
+                
+                print(f"dt: {dt}")
+
+                x_t = x_t + drift*dt 
+
+                print(drift.abs().max(), dt)
+
+                # if t == 101:
+                #     exit()
+
+                # exit()
+
+
+
+                z[t,:,:,:,:] = x_t
+               
                 logp += logp_grad*dt
                 print("norm of drift: "+str(th.norm(drift))) # DEBUG
                 print("logp: "+str(logp))
           
             nfe = score_cl.num_timesteps
-            z = x_t
+            z = z[0]
             print("x-x_T diff: ")
             delta_logp = logp
             print("delta_logp: "+str(logp)) # DEBUG

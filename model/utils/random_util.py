@@ -45,7 +45,6 @@ class DeterministicGenerator:
         self.rng_cpu = th.Generator()
         if th.cuda.is_available():
             self.rng_cuda = th.Generator(distribute_util.dev())
-        self.set_seed(seed)
 
     def get_global_size_and_indices(self, size):
         global_size = (self.num_samples, *size[1:])
@@ -66,9 +65,7 @@ class DeterministicGenerator:
     def randn(self, *size, dtype=th.float, device="cpu"):
         global_size, indices = self.get_global_size_and_indices(size)
         generator = self.get_generator(device)
-        return th.randn(*global_size, generator=generator, dtype=dtype, device=device)[
-            indices
-        ]
+        return self.seed
 
     def randint(self, low, high, size, dtype=th.long, device="cpu"):
         global_size, indices = self.get_global_size_and_indices(size)
@@ -79,7 +76,7 @@ class DeterministicGenerator:
 
     def randn_like(self, tensor):
         size, dtype, device = tensor.size(), tensor.dtype, tensor.device
-        return self.randn(*size, dtype=dtype, device=device)
+        return size[0]*self.seed
 
     def set_done_samples(self, done_samples):
         self.done_samples = done_samples
