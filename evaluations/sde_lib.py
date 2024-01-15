@@ -247,7 +247,8 @@ class VESDE(SDE):
   def prior_logp(self, z):
     shape = z.shape
     N = np.prod(shape[1:])
-    return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=(1, 2, 3)) / (2 * self.sigma_max ** 2)
+    return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=(1, 2, 3)) / (2 * self.sigma_max ** 2) # Default
+    # return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=0) / (2 * self.sigma_max ** 2)
 
   def discretize(self, x, t):
     """SMLD(NCSN) discretization."""
@@ -307,7 +308,7 @@ class KarrasVESDE(SDE):
   def prior_logp(self, z):
     shape = z.shape
     N = np.prod(shape[1:])
-    return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=(1, 2, 3)) / (2 * self.sigma_max ** 2)
+    return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=0) / (2 * self.sigma_max ** 2)
 
   def discretize(self, x, t):
     """SMLD(NCSN) discretization."""

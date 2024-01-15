@@ -30,7 +30,7 @@ class Karras_Score:
         sigma_data: float = 0.5,
         sigma_max=80.0,
         sigma_min=0.002,
-        num_timesteps=40,
+        num_timesteps=100,
         rho=7.0,
         s_churn=0.0,
         s_tmin=0.0,
@@ -57,8 +57,8 @@ class Karras_Score:
         self.min_inv_rho = self.sigma_min ** (1 / self.rho)
         self.max_inv_rho = self.sigma_max ** (1 / self.rho)
 
-        self.sigmas = self.get_sigmas_karras(self.num_timesteps)
-        # self.sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), self.num_timesteps)).to(self.device)
+        # self.sigmas = self.get_sigmas_karras(self.num_timesteps)
+        self.sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), self.num_timesteps)).to(self.device)
 
     def append_dims(self, x, target_dims):
         """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
@@ -88,40 +88,52 @@ class Karras_Score:
         c_in = 1/(sigma**2+self.sigma_data**2)**0.5
         return c_skip, c_out, c_in
 
-    # def denoise_score(self, x, t):
-    #     """Return the score (gradient) of denoising diffusion model"""
-    #     s_in = x.new_ones([x.shape[0]])
-    #     sigma = s_in*self.sigmas[t]
-    #     noise = th.randn_like(x)
-    #     x_t = x+noise*self.append_dims(sigma[0], x.ndim)
-    #     c_skip, c_out, c_in = [self.append_dims(xx, x_t.ndim) for xx in self.get_scalings(sigma)]
-    #     rescaled_t = 1000*0.25*th.log(sigma+1e-44)
-    #     model_output = self.model(c_in*x_t, rescaled_t)
-    #     denoised = c_out*model_output+c_skip*x_t
-    #     score = (x-denoised)/self.append_dims(sigma,x.ndim)
-    #     return score
-    
-    def denoise_score(self, x, t):
-        gamma = (
-            min(self.s_churn / (len(self.sigmas[t]) - 1), 2**0.5 - 1)
-            if self.s_tmin <= self.sigmas[t] <= self.s_tmax
-            else 0.0
-        )
-        sigma_hat = self.sigmas[t] * (gamma + 1)
-        noise = th.randn_like(x)
-        if gamma > 0:
-            x_t = x + noise * (sigma_hat**2 - self.sigmas[t] ** 2) ** 0.5
-        else:
-            x_t = x
-        # denoised = denoiser(x, sigma_hat * s_in)
-        c_skip, c_out, c_in = [self.append_dims(xx, x.ndim) for xx in self.get_scalings(sigma_hat)]
-        rescaled_t = 1000*0.25*th.log(sigma_hat+1e-44)
-        model_output = self.model(c_in*x_t, rescaled_t)
-        denoised = c_out*model_output+c_skip*x_t
-        score = (x-denoised)/self.append_dims(sigma_hat,x.ndim)
-        return score
+    def to_d(self, x, sigma, denoised):
+        """Converts a denoiser output to a Karras ODE derivative."""
+        # print("x shape: "+str(x.shape)) # DEBUG
+        # print("sigma shape: "+str(sigma.shape))
+        # print("denoised shape: "+str(denoised.shape)) 
+        return (x - denoised) / self.append_dims(sigma, x.ndim)
+
+    def denoise(self, x_t, sigmas):
+        c_skip, c_out, c_in = [
+            self.append_dims(x, x_t.ndim) for x in self.get_scalings(sigmas)
+        ]
+        rescaled_t = 1000 * 0.25 * th.log(sigmas + 1e-44)
+        model_output = self.model(c_in * x_t, rescaled_t)
+        denoised = c_out * model_output + c_skip * x_t
+        
+        return model_output, denoised
+
+    @th.no_grad()
+    def euler_step(self, x_t, t):
+        """Adds noise to x using sigma[t] and then denoises and computes the gradident of score
+           to perform euler update step.
+        """
+        s_in = x_t.new_ones([x_t.shape[0]])
+        sigma_hat = self.sigmas[t]
+        noise = th.randn_like(x_t)
+        x_t1 = x_t + noise*(sigma_hat**2 - self.sigmas[t] ** 2) ** 0.5
+        _, denoised = self.denoise(x_t1, sigma_hat*s_in)
+        d = self.to_d(x_t1, sigma_hat*s_in, denoised)
+        
+        dt = self.sigmas[t-1]-sigma_hat
+        x_t1 = x_t1 + d*dt
+
+        return x_t1, dt
+
+    def denoise_score(self, x_t, t):
+        s_in = x_t.new_ones([x_t.shape[0]])
+        sigma_hat = self.sigmas[t]
+        noise = th.randn_like(x_t)
+        x_t1 = x_t + noise*(sigma_hat**2 - self.sigmas[t] ** 2) ** 0.5
+        _, denoised = self.denoise(x_t1, sigma_hat*s_in)
+        d = self.to_d(x_t1, sigma_hat*s_in, denoised)
+       
+        return d
 
     def get_score(self, x, label):
+    #    print("get_score label: "+str(label)) # DEBUG
        return self.denoise_score(x, label[0])
     
 
@@ -243,7 +255,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
 
     def drift_fn(model, x, t):
         """The drift function of the reverse-time SDE."""
-        score_fn = get_score_fn(sde, model, train=False, continuous=True) # Default: continuous=True
+        score_fn = get_score_fn(sde, model, train=False, continuous=False) # Default: continuous=True
         # Probability flow ODE is a special case of Reverse SDE
         rsde = sde.reverse(score_fn, probability_flow=True)
         return rsde.sde(x, t)[0]
