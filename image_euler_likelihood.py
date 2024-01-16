@@ -11,7 +11,7 @@
     (https://github.com/yang-song/score_sde_pytorch/blob/main/run_lib.py)
 
     Launch command:
-    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 128 --batch_size 3 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/model014000.pt --data_dir /home/datasets/c4test_rot90 --num_samples 1 --sde VESDE 
+    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 500 --batch_size 500 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/model014000.pt --data_dir /home/datasets/c4test_rot90 --num_samples 1 --sde VESDE 
 """
 
 import io
@@ -40,7 +40,6 @@ from evaluations import euler_likelihood
 
 # -----------------------------------------------
 ## Preliminary function
-
 def create_argparser():
     defaults = dict(
         data_dir="",
@@ -53,30 +52,25 @@ def create_argparser():
         weight_decay=0.0,
         lr_anneal_steps=0,
         global_batch_size=2048,
-        num_samples=None,
+        steps=None,
         batch_size=-1,
         microbatch=-1,      # -1 disables microbatches
+        num_samples=-1,
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
-        sde='VESDE',
-        user_id='dummy',
-        slurm_id='-1'
-        training_mode="edm",
-        generator="determ",
-        clip_denoised=True,
-        num_samples=16,
-        batch_size=16,
-        sampler="heun",
+        sde='VPSDE',
         s_churn=0.0,
         s_tmin=0.0,
         s_tmax=float("inf"),
         s_noise=1.0,
-        steps=80,
         seed=42,
+        user_id='dummy',
+        slurm_id='-1',
+        device='cuda:0'
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
@@ -112,19 +106,18 @@ def main():
     # Default parameter values 
     sigma_max = 80.0 or args.sigma_max
     sigma_min = 0.002 or args.sigma_min
-    num_timesteps = 200 or args.num_timesteps
-    sampling_eps = 1e-5 or args.sampling_eps
+    steps = 1000 or args.steps
     bpd_num_repeats = 1 # Average over the dataset this many times when computing likelihood 
 
     if args.sde == "VESDE":
         # Varaince exploding SDE
-        sde = euler_likelihood.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=num_timesteps)
+        sde = euler_likelihood.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
         print("sde.T: "+str(sde.T)) # DEBUG
         print("sde.N: "+str(sde.N)) # DEBUG
     else:
         NotImplementedError(f"SDE not implemented")
 
-    likelihood_fn = euler_likelihood.get_likelihood_fn(sde, get_data_inverse_scaler()) # DEBUG: remove esp argument
+    likelihood_fn = euler_likelihood.get_likelihood_fn(sde, get_data_inverse_scaler())
 
     # Create diffusion model and load checkpoint state
     logger.log("\nCreating model and diffusion...")
@@ -146,7 +139,7 @@ def main():
     data = load_data(
         data_dir=args.data_dir,
         batch_size=args.batch_size,
-        deterministic=False,
+        deterministic=True,
         image_size=args.image_size,
         class_cond=args.class_cond,
     )
@@ -154,90 +147,25 @@ def main():
     # Compute negative log-likelihoods (bits/dim) 
     logger.log("\nComputing NLL of data...")
     bpds = []
+    nfes = []
+    means = []
+    vars = []
     for i in range(bpd_num_repeats):
-        for batch_id in range(int(args.num_samples)):
-            batch, cond = next(data)
-            batch = batch.to('cuda:0').float()
-            bpd, z, nfe = likelihood_fn(model, batch)
-            bpd = bpd.detach().cpu().numpy().reshape(-1)
-            bpds.extend(bpd)
-            # logger.info("ckpt: %d, repeat: %d, batch: %d, mean bpd: %6f" % (ckpt, repeat, batch_id, np.mean(np.asarray(bpds))))
-            bpd_round_id = batch_id+int(args.num_samples)*i
-            # Save bits/dim to disk
-            ## DEBUG
-            print("NFE: "+str(nfe))
-            print("NLL mean: "+str(np.mean(bpd)))
-            print("NLL var: "+str(np.var(bpd)))
+        batch, cond = next(data)
+        batch = batch.to('cuda:0').float()
+        bpd, z, nfe = likelihood_fn(model, batch)
+        bpd = bpd.detach().cpu().numpy().reshape(-1)
+        bpds.extend(bpd)
 
-    # Samples images using z prior
-    logger.log("sampling...")
-    if args.sampler == "multistep":
-        assert len(args.ts) > 0
-        ts = tuple(int(x) for x in args.ts.split(","))
-    else:
-        ts = None
+        nfes.append(nfe)
+        means.append(np.mean(bpd))
+        vars.append(np.var(bpd))
 
-    all_images = []
-    all_labels = []
-    generator = get_generator(args.generator, args.num_samples, args.seed)
+    logger.log("Mean NFE: "+str(np.sum(nfe)/bpd_num_repeats))
+    logger.log("NLL mean: "+str(np.mean(means)))
+    logger.log("NLL var: "+str(np.var(vars)))
 
-    while len(all_images) * args.batch_size < args.num_samples:
-        model_kwargs = {}
-        if args.class_cond:
-            classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(args.batch_size,), device=distribute_util.dev()
-            )
-            model_kwargs["y"] = classes
-
-        sample = karras_sample(
-            diffusion,
-            model,
-            (args.batch_size, 3, args.image_size, args.image_size),
-            steps=args.steps,
-            model_kwargs=model_kwargs,
-            device=distribute_util.dev(),
-            clip_denoised=args.clip_denoised,
-            sampler=args.sampler,
-            sigma_min=args.sigma_min,
-            sigma_max=args.sigma_max,
-            s_churn=args.s_churn,
-            s_tmin=args.s_tmin,
-            s_tmax=args.s_tmax,
-            s_noise=args.s_noise,
-            generator=generator,
-            ts=ts,
-        )
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        sample = sample.permute(0, 2, 3, 1)
-        sample = sample.contiguous()
-
-        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
-        all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
-        if args.class_cond:
-            gathered_labels = [
-                th.zeros_like(classes) for _ in range(dist.get_world_size())
-            ]
-            dist.all_gather(gathered_labels, classes)
-            all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
-        logger.log(f"created {len(all_images) * args.batch_size} samples")
-
-    arr = np.concatenate(all_images, axis=0)
-    arr = arr[: args.num_samples]
-    if args.class_cond:
-        label_arr = np.concatenate(all_labels, axis=0)
-        label_arr = label_arr[: args.num_samples]
-    if dist.get_rank() == 0:
-        shape_str = "x".join([str(x) for x in arr.shape])
-        out_path = os.path.join(logger.get_dir(), f"samples_{shape_str}.npz")
-        logger.log(f"saving to {out_path}")
-        if args.class_cond:
-            np.savez(out_path, arr, label_arr)
-        else:
-            np.savez(out_path, arr)
-
-    dist.barrier()
-    logger.log("sampling complete")
+    logger.log("\n...Finished")
             
 
 if __name__=="__main__":
