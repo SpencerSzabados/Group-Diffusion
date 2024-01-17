@@ -125,7 +125,7 @@ class UNetModel(nn.Module):
 
         ch = input_ch = int(channel_mult[0] * model_channels) # Number in_channels in first ResBlock after time embedding
         self.input_blocks = nn.ModuleList(
-            [TimestepEmbedSequential(gconv_nd(dims, g_equiv=True, g_input=self.g_input, g_output=self.g_output, in_channels=in_channels, out_channels=ch, kernel_size=self.kernel_size, padding=self.padding))]
+            [TimestepEmbedSequential(gconv_nd(dims, g_equiv=self.g_equiv, g_input=self.g_input, g_output=self.g_output, in_channels=in_channels, out_channels=ch, kernel_size=self.kernel_size, padding=self.padding))]
         )
         self._feature_size = ch
         input_block_chans = [ch]

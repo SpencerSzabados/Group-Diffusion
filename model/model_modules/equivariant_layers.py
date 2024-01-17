@@ -527,7 +527,6 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
                 else:
                     raise NotImplementedError(f"unsupported g_input g_ouput combination in gconv_nd: {g_input, g_output}\n or unsupported suffix: {suffix}")
         raise ValueError(f"unsupported dimensions for equivariant in gconv_nd: {dims}")
-    
     elif g_equiv == False:
         if dims == 1:
             return nn.Conv1d(*args, **kwargs)

@@ -193,7 +193,7 @@ class TrainLoop:
                     self.model,
                     (40, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
                     steps=100,
-                    model_kwargs={'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)},
+                    model_kwargs={}, #{'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)},
                     device=distribute_util.dev(),
                     clip_denoised=True,
                     sampler='euler',

@@ -14,6 +14,7 @@ import torch as th
 import numpy as np
 from tqdm import tqdm
 from piq import LPIPS
+import torchvision
 
 class SDE(abc.ABC):
     """SDE abstract class. Functions are designed for a mini-batch of inputs."""
@@ -120,6 +121,60 @@ class SDE(abc.ABC):
         return RSDE()
     
 
+class VPSDE(SDE):
+  def __init__(self, beta_min=0.1, beta_max=20, N=1000):
+    """Construct a Variance Preserving SDE.
+
+    Args:
+      beta_min: value of beta(0)
+      beta_max: value of beta(1)
+      N: number of discretization steps
+    """
+    super().__init__(N)
+    self.beta_min = beta_min
+    self.beta_max = beta_max
+    self.N = N
+    self.discrete_betas = th.linspace(beta_min / N, beta_max / N, N)
+    self.alphas = 1. - self.discrete_betas
+    self.alphas_cumprod = th.cumprod(self.alphas, dim=0)
+    self.sqrt_alphas_cumprod = th.sqrt(self.alphas_cumprod)
+    self.sqrt_1m_alphas_cumprod = th.sqrt(1. - self.alphas_cumprod)
+
+  @property
+  def T(self):
+    return 1
+
+  def sde(self, x, t):
+    beta_t = self.beta_min + t * (self.beta_max - self.beta_min)
+    drift = -0.5 * beta_t[:, None, None, None] * x
+    diffusion = th.sqrt(beta_t)
+    return drift, diffusion
+
+  def marginal_prob(self, x, t):
+    log_mean_coeff = -0.25 * t ** 2 * (self.beta_max - self.beta_min) - 0.5 * t * self.beta_min
+    mean = th.exp(log_mean_coeff[:, None, None, None]) * x
+    std = th.sqrt(1. - th.exp(2. * log_mean_coeff))
+    return mean, std
+
+  def prior_sampling(self, shape):
+    return th.randn(*shape)
+
+  def prior_logp(self, z):
+    shape = z.shape
+    N = np.prod(shape[1:])
+    logps = -N / 2. * np.log(2 * np.pi) - th.sum(z ** 2, dim=(1, 2, 3)) / 2.
+    return logps
+
+  def discretize(self, x, t):
+    """DDPM discretization."""
+    timestep = (t * (self.N - 1) / self.T).long()
+    beta = self.discrete_betas.to(x.device)[timestep]
+    alpha = self.alphas.to(x.device)[timestep]
+    f = th.sqrt(alpha)[:, None, None, None] * x - x
+    G = th.sqrt(beta)
+    return f, G
+
+
 class VESDE(SDE):
     def __init__(self, sigma_min=0.01, sigma_max=50, N=1000):
         """Construct a Variance Exploding SDE.
@@ -133,7 +188,6 @@ class VESDE(SDE):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.discrete_sigmas = th.exp(th.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
-        # self.discrete_sigmas = th.linspace(self.sigma_min, self.sigma_max, N)
         self.N = N
 
     @property
@@ -158,14 +212,14 @@ class VESDE(SDE):
 
     def prior_logp(self, z):
         shape = z.shape
-        N = np.prod(shape[1:])
-        return -N/2.*np.log(2*np.pi*self.sigma_max**2) - th.sum(z**2, dim=(1, 2, 3))/(2*self.sigma_max**2) # Default
-        # return -N / 2. * np.log(2 * np.pi * self.sigma_max ** 2) - torch.sum(z ** 2, dim=0) / (2 * self.sigma_max ** 2)
+        d = np.prod(shape[1:])
+        return -d/2.*np.log(2.*np.pi*self.sigma_max**2) - th.sum(z**2, dim=(1, 2, 3))/(2*self.sigma_max**2) 
 
     def discretize(self, x, t):
         """SMLD(NCSN) discretization."""
         sigma = self.discrete_sigmas.to(x.device)[t]
-        adjacent_sigma = th.where(t==0, th.zeros_like(t), self.discrete_sigmas.to(x.device)[t-1])
+        # adjacent_sigma = th.where(t==0, th.zeros_like(t), self.discrete_sigmas.to(x.device)[t-1])
+        adjacent_sigma = self.discrete_sigmas.to(x.device)[t-1] if t-1 >= 0 else 0.0
         f = th.zeros_like(x)
         G = th.sqrt(sigma**2 - adjacent_sigma**2)
         return f, G
@@ -249,44 +303,47 @@ class Karras_Score:
         """Converts a denoiser output to a Karras ODE derivative."""
         return (x - denoised) / self.append_dims(sigma, x.ndim)
 
-    def denoise(self, x_t, sigmas):
+    def denoise(self, x_t, y, sigmas):
         """Denoises x_t given time steps sigmas."""
         c_skip, c_out, c_in = [
             self.append_dims(x, x_t.ndim) for x in self.get_scalings(sigmas)
         ]
         rescaled_t = 1000*0.25*th.log(sigmas + 1e-44)
-        model_output = self.model(c_in*x_t, rescaled_t)
+        if y==None:
+            model_output = self.model(c_in*x_t, rescaled_t)
+        else:
+            model_output = self.model(c_in*x_t, rescaled_t, y)
         denoised = c_out*model_output + c_skip*x_t  
         return model_output, denoised
 
     @th.no_grad()
-    def euler_step(self, x, t):
+    def euler_step(self, x, y, t):
         """Adds noise to x using sigma[t] and then denoises and computes the gradident of score
            to perform euler update step.
         """
         s_in = x.new_ones([x.shape[0]])
-        noise = th.randn_like(x)
-        x_t = x + noise*(self.sigmas[t]**2)**0.5
+        _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
+        # denoised = denoised.clamp(-1, 1)
 
-        _, denoised = self.denoise(x_t, self.sigmas[t]*s_in)
-        denoised = denoised.clamp(-1, 1)
-
-        d = self.to_d(x_t, self.sigmas[t]*s_in, denoised)
+        d = self.to_d(x, self.sigmas[t]*s_in, denoised)
         dt = self.sigmas[t] - (0 if t - 1 < 0 else self.sigmas[t-1])
 
-        x_t = x_t + d*dt
+        x_t = x + d*dt
 
         return x, x_t, dt
 
-    def denoise_score(self, x_t, t):
+    def denoise_score(self, x_t, y, t):
         """Computes the denoising score (gradient of logp) of x_t at time sigma[t]."""
         s_in = x_t.new_ones([x_t.shape[0]])
-        _, denoised = self.denoise(x_t, self.sigmas[t]*s_in)
+        _, denoised = self.denoise(x_t, y, self.sigmas[t]*s_in)
         d = self.to_d(x_t, self.sigmas[t]*s_in, denoised)
         return d
 
-    def get_score(self, x, t):
-       return self.denoise_score(x, t[0])
+    def pfode_score(self, x, y, t):
+       return self.denoise_score(x, y, t[0])
+    
+    def ddim_score(self, x, y, t):
+        return None # TODO
 
 
 def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
@@ -305,7 +362,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
     A function that takes a batch of data points and returns the log-likelihoods in bits/dim,
         the latent code, and the number of function evaluations cost by computation.
     """
-    def likelihood_fn(model, data):
+    def likelihood_fn(model, data, y):
         """Compute an unbiased estimate to the log-likelihood in bits/dim.
 
         Args:
@@ -341,48 +398,53 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             A score function.
             """
 
-            def score_fn(x, t):
-                score = score_cl.get_score(x, t)
+            def score_fn(x, y, t):
+                score = score_cl.get_score(x, y, t)
                 return score
             
             return score_fn
 
-        def drift_fn(score_cl, x, t):
+        def drift_fn(score_cl, x, y, t):
             """The drift function of the reverse-time SDE."""
             score_fn = get_score_fn(score_cl) # Default: continuous=True
             # rsde = score_cl.sde.reverse(score_fn, probability_flow=True) # Probability flow ODE is a special case of Reverse SDE
             # return rsde.discretize(x,t)[0]
-            return score_fn(x,t)
+            return score_fn(x, y, t)
 
-        def div_fn(score_cl, x, t, epsilon):
-            fn = lambda xx, tt: drift_fn(score_cl, xx, tt)
+        def div_fn(score_cl, x, y, t, epsilon):
             with th.enable_grad():
                 x.requires_grad_(True)
-                fn_eps = th.sum(fn(x, t)*epsilon)
+                fn_eps = th.sum(drift_fn(score_cl, x, y, t)*epsilon)
                 grad_fn_eps = th.autograd.grad(fn_eps, x)[0]
             x.requires_grad_(False)
             return th.sum(grad_fn_eps*epsilon, dim=tuple(range(1, len(x.shape))))
         
-        def ode_func(x, t):
+        def ode_func(x,y,t):
             vec_t = th.ones(x.shape[0], device=x.device, dtype=int)*t
-            drift = drift_fn(score_cl, x, vec_t)
-            logp_grad = div_fn(score_cl, x, vec_t, epsilon)
+            drift = drift_fn(score_cl, x, y, vec_t)
+            logp_grad = div_fn(score_cl, x, y, vec_t, epsilon)
             return (drift, logp_grad)
     
         with th.no_grad():
-            x_t = data+th.randn_like(data)*score_cl.sigma_min
+            x_t = data+th.randn_like(data)*score_cl.sigma_min # Need to add noise to data as T='inf'
+            print(x_t.shape)
+            if y!=None:
+                y = y['y'].to(data.device)
             logp = th.zeros((shape[0],)).to(data.device)
 
             # Run euler steps
             for t in tqdm(range(0,int(score_cl.steps))): 
-                _, _, dt = score_cl.euler_step(data,t)
+                _, x_t, dt = score_cl.euler_step(x_t, y, t)
                 
-                drift, logp_grad = ode_func(x_t,t) 
+                grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
+                torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
+                
+                drift, logp_grad = ode_func(x_t, y, t) 
                 
                 # print(f"dt: {dt}") # DEBUG
                 # print(drift.abs().max(), dt) # DEBUG
 
-                x_t = x_t + drift*dt 
+                # x_t = x_t + drift*dt 
                 logp = logp + logp_grad*dt
 
                 # print("norm of drift: "+str(th.norm(drift))) # DEBUG
@@ -392,9 +454,15 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             z = x_t
             delta_logp = logp
             print("delta_logp: "+str(logp)) # DEBUG
+            # zero_prior = th.zeros_like(data)
+            # zero_prior_logp = sde.prior_logp(zero_prior)
+            # one_prior = th.ones_like(data)
+            # one_prior_logp = sde.prior_logp(one_prior)
+            # print("zero prior logp: "+str(zero_prior_logp))
+            # print("one prior logp: "+str(one_prior_logp))
             prior_logp = sde.prior_logp(z)
             print("prior_logp: "+str(prior_logp)) # DEBUG
-            bpd = (-prior_logp + delta_logp)/np.log(2)
+            bpd = -(prior_logp-delta_logp)/np.log(2)
             # Normalize by resolution and number of channels 
             bpd = bpd/np.prod(shape[1:]) 
             # A hack to convert log-likelihoods to bits/dim

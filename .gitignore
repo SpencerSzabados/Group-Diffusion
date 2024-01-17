@@ -5,6 +5,7 @@ reference_code/
 *.cpython-310
 *~
 *.JPEG
+*.pdf
 tmp*
 tmp_imgs/
 tmp_imgs_c4_c4/

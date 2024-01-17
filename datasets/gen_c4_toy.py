@@ -27,7 +27,7 @@ from torchvision import transforms
 
 
 # Directory 
-DATA_PATH = '/home/sszabados/Group-Diffusion/tmp_imgs/c4test_rot90'
+DATA_PATH = '/home/sszabados/datasets/c4_toy'
 
 # Generation paramters
 HIGHT_WIDTH = 28 # Resolution of generated images
@@ -46,9 +46,10 @@ def gen_c4test(rot=0):
         for i in range(int(DIVIDER*HIGHT_WIDTH*0.5), int(DIVIDER*HIGHT_WIDTH)):
             for j in range(int(DIVIDER*HIGHT_WIDTH*0.5),int(DIVIDER*HIGHT_WIDTH)):
                 image[j,i] = colour
+        rand_cond = np.random.randint(low=0,high=9)
         image = Image.fromarray(image).convert('RGB')
         image = image.rotate(rot, expand=True)
-        image.save(os.path.join(DATA_PATH, f"{n}.JPEG"))
+        image.save(os.path.join(DATA_PATH, f"{rand_cond}_{n}.JPEG"))
 
 
 def gen_c4test_samples():
@@ -78,8 +79,8 @@ def gen_c4test_samples():
     
 
 def main():
-    # gen_c4test(rot=90)
-    gen_c4test_samples()
+    gen_c4test(rot=0)
+    # gen_c4test_samples()
 
 
 if __name__=="__main__":

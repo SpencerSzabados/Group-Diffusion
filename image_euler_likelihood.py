@@ -11,7 +11,7 @@
     (https://github.com/yang-song/score_sde_pytorch/blob/main/run_lib.py)
 
     Launch command:
-    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 500 --batch_size 500 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/model014000.pt --data_dir /home/datasets/c4test_rot90 --num_samples 1 --sde VESDE 
+    OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv False --g_input Z2_K --g_output Z2_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 100 --batch_size 100 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/c4toy_example_non_eqv/model016000.pt --data_dir /home/datasets/c4test_rot90 --num_samples 1 --steps 100 --sde VESDE 
 """
 
 import io
@@ -52,7 +52,7 @@ def create_argparser():
         weight_decay=0.0,
         lr_anneal_steps=0,
         global_batch_size=2048,
-        steps=None,
+        steps=1,
         batch_size=-1,
         microbatch=-1,      # -1 disables microbatches
         num_samples=-1,
@@ -104,18 +104,20 @@ def main():
         os.environ['USER'] = args.user_id
 
     # Default parameter values 
-    sigma_max = 80.0 or args.sigma_max
-    sigma_min = 0.002 or args.sigma_min
-    steps = 1000 or args.steps
+    sigma_max = args.sigma_max or 80.0
+    sigma_min = args.sigma_min or 0.002
+    steps = args.steps or 100
     bpd_num_repeats = 1 # Average over the dataset this many times when computing likelihood 
 
-    if args.sde == "VESDE":
-        # Varaince exploding SDE
+    if args.sde == "VPSDE":
+        sde = euler_likelihood.VPSDE()
+    elif args.sde == "VESDE":
         sde = euler_likelihood.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
-        print("sde.T: "+str(sde.T)) # DEBUG
-        print("sde.N: "+str(sde.N)) # DEBUG
     else:
         NotImplementedError(f"SDE not implemented")
+
+    print("sde.T: "+str(sde.T)) # DEBUG
+    print("sde.N: "+str(sde.N)) # DEBUG
 
     likelihood_fn = euler_likelihood.get_likelihood_fn(sde, get_data_inverse_scaler())
 
@@ -152,8 +154,9 @@ def main():
     vars = []
     for i in range(bpd_num_repeats):
         batch, cond = next(data)
+        cond = cond if args.class_cond else None
         batch = batch.to('cuda:0').float()
-        bpd, z, nfe = likelihood_fn(model, batch)
+        bpd, z, nfe = likelihood_fn(model, batch, cond)
         bpd = bpd.detach().cpu().numpy().reshape(-1)
         bpds.extend(bpd)
 
