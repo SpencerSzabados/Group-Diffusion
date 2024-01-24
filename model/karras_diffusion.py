@@ -40,10 +40,12 @@ class KarrasDenoiser:
     def __init__(
         self,
         diff_type="pfode",
+        pred_type='x',
         sigma_data: float = 0.5,
         sigma_max=80.0,
         sigma_min=0.002,
         rho=7.0,
+        num_timesteps=40,
         weight_schedule="karras",
         distillation=False,
         loss_norm="lpips",
@@ -59,8 +61,8 @@ class KarrasDenoiser:
         if loss_norm == "lpips":
             self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")
         self.rho = rho
-        self.num_timesteps = 40
-        if aug_pip_arg:
+        self.num_timesteps = num_timesteps
+        if aug_pip_arg is not None:
             self.aug_pip = AugmentPipe(**aug_pip_arg)
 
     def get_snr(self, sigmas):
@@ -100,15 +102,12 @@ class KarrasDenoiser:
         dims = x_start.ndim
 
         if self.diff_type=="ddim":
-            weights = 1
             alphas = append_dims(th.sqrt(gamma(sigmas)), dims)
             x_t = alphas*x_start + noise*append_dims(th.sqrt(1-gamma(sigmas)), dims)
         elif self.diff_type=="pfode":
-            snrs = self.get_snr(sigmas)
-            weights = append_dims(
-                get_weightings(self.weight_schedule, snrs, self.sigma_data), dims
-            )
             x_t = x_start + noise*append_dims(sigmas, dims)
+        else:
+            raise NotImplementedError(f"Error: diff_type={self.diff_type} is not currently supported.")
         
         model_output, denoised = self.denoise(model, x_t, sigmas, **model_kwargs)
 
@@ -116,28 +115,32 @@ class KarrasDenoiser:
         if target_model:
             with th.no_grad():
                 aug_op, aug_op_inv = get_eqv_reg_pair(eqv_reg)
-                
-                # 1) aug x_t according to inv_reg
+                # 1) aug x_t according to eqv_reg
                 aug_x_t = aug_op(x_t)
-
                 # 2) compute denoised of aug_x_t using target model
                 aug_model_output, aug_denoised = self.denoise(target_model, aug_x_t, sigmas, **model_kwargs)
-
                 # 3) apply reverse aug over aug_denoised
                 # inv_aug_denoised = aug_op_inv(aug_denoised.detach())
                 target_model_ouput = aug_op_inv(aug_model_output.detach())
 
-        snrs = self.get_snr(sigmas)
-        weights = append_dims(
-            get_weightings(self.weight_schedule, snrs, self.sigma_data), dims
-        )
+        if self.diff_type=='ddim':
+            weights = 1
+        elif self.diff_type=='pfode':
+            snrs = self.get_snr(sigmas)
+            weights = append_dims(
+                get_weightings(self.weight_schedule, snrs, self.sigma_data), dims
+            )
+        else:
+            raise NotImplementedError(f"Error: diff_type={self.diff_type} is not currently supported.")
 
         terms = {}
         if pred_type == 'eps':
             assert self.diff_type != 'pfode', 'pfode implementation is not for eps prediction conf' 
             terms["mse"] = mean_flat(weights * (denoised - noise) ** 2)
-        else:
+        elif pred_type == 'x':
             terms["mse"] = mean_flat(weights * (denoised - x_start) ** 2)
+        else:
+            raise NotImplementedError(f"Selected pred_type={pred_type} is not implemented.")
 
         if target_model_ouput is not None:
             # terms["mse_inv"] = mean_flat(weights * (denoised - inv_aug_denoised) ** 2)
@@ -400,6 +403,9 @@ def karras_sample(
     model,
     shape,
     steps,
+    pred_type='x',
+    data_augment=0,
+    eqv_reg=None,
     clip_denoised=True,
     progress=False,
     callback=None,
@@ -408,7 +414,7 @@ def karras_sample(
     sigma_min=0.002,
     sigma_max=10,  # higher for highres?
     rho=7.0,
-    sampler="heun",
+    sampler="euler",
     s_churn=0.0,
     s_tmin=0.0,
     s_tmax=float("inf"),
@@ -424,10 +430,17 @@ def karras_sample(
     else:
         sigmas = get_sigmas_karras(steps, sigma_min, sigma_max, rho, device=device)
 
-    x_T = generator.randn(*shape, device=device) * sigma_max
+    if sampler == "ddim" or sampler == 'ddpm':
+        sigmas = get_sigmas_ddim(steps, device=device)
+
+    if sampler == "ddim" or sampler == 'ddpm':
+        x_T = generator.randn(*shape, device=device)
+    else:
+        x_T = generator.randn(*shape, device=device) * sigma_max
 
     sample_fn = {
         "heun": sample_heun,
+        "ddim": sample_ddim,
         "dpm": sample_dpm,
         "ancestral": sample_euler_ancestral,
         "onestep": sample_onestep,
@@ -445,11 +458,21 @@ def karras_sample(
             ts=ts, t_min=sigma_min, t_max=sigma_max, rho=diffusion.rho, steps=steps
         )
     else:
-        sampler_args = {}
+        sampler_args = dict(eqv_reg=eqv_reg)
 
+    if eqv_reg is not None:
+        _, _, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
+        model_kwargs_ = dict()
+        for k in model_kwargs:
+            model_kwargs_[k] = para_aug(model_kwargs[k])
+        model_kwargs = model_kwargs_
 
-    def denoiser(x_t, sigma):
-        _, denoised = diffusion.denoise(model, x_t, sigma, **model_kwargs)
+    def denoiser(x_t, sigma, aug_data=dict()):
+        if data_augment>0:
+            aug_data["aug_labels"] = th.zeros(x_t.size(0), data_augment, device=x_t.device)
+
+        _, denoised = diffusion.denoise(model, x_t, sigma, **aug_data, **model_kwargs)
+
         if clip_denoised:
             denoised = denoised.clamp(-1, 1)
 
@@ -713,62 +736,54 @@ def sample_ddim(
     x,
     sigmas,
     generator,
-    inv_traj = None,
+    pred_type='x',
+    eqv_reg=None,
     progress=False,
     callback=None,
     s_churn=0.0,
     s_tmin=0.0,
     s_tmax=float("inf"),
     s_noise=1.0,
-    self_cond = False,
-    pred_type = None,
 ):
     """Implements DDIM sampling for models trained using DDIM scheme."""
-    if self_cond and inv_traj is not None:
-        raise NotImplementedError
-        
     s_in = x.new_ones([x.shape[0]])
     time_pairs = sigmas
-    extra_input = dict()
-    x_self_cond = None
+    aug_data = dict()
 
-    extra_input_ = dict()
-    for k in extra_input:
+    aug_data_ = dict()
+    for k in aug_data:
         print(k)
-        extra_input_[k] = para_aug(extra_input[k])
+        aug_data_[k] = para_aug(aug_data[k])
 
-    if inv_traj is not None:
-        aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(inv_traj)
+    if eqv_reg is not None:
+        aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
 
     for time, time_next in tqdm(time_pairs):
         gamma_now = gamma(time)
         gamma_next = gamma(time_next)
 
         if pred_type == 'x':
-            if inv_traj is not None:
+            if eqv_reg is not None:
                 denoised = aug_op_inv(
-                    denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), x_self_cond=x_self_cond,  extra_ipt = extra_input_)
+                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), aug_data=aug_data_)
                 )
             else:
-                denoised = denoiser(x_t = x, sigma = time * s_in, x_self_cond = x_self_cond, extra_ipt = extra_input)
-            if self_cond:
-                x_self_cond = denoised
+                denoised = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
+            
             denoised.clamp_(-1, 1)
-            pred_noise = (x - th.sqrt(gamma_now) * denoised) / th.sqrt(1- gamma_now)
+            pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
         elif pred_type == 'eps':
-            if inv_traj is not None:
+            if eqv_reg is not None:
                 pred_noise = aug_op_inv(
-                    denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), x_self_cond=x_self_cond,  extra_ipt = extra_input_)
+                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), aug_data=aug_data_)
                 )
             else:
-                pred_noise = denoiser(x_t = x, sigma = time * s_in, x_self_cond = x_self_cond, extra_ipt = extra_input)
-            denoised = (x - th.sqrt(1- gamma_now) * pred_noise) / th.sqrt(gamma_now)           
-            if self_cond:
-                x_self_cond = denoised
+                pred_noise = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
+            denoised = (x-th.sqrt(1-gamma_now)*pred_noise)/th.sqrt(gamma_now) 
         else:
-            raise NotImplementedError(f'{pred_type} not implemented')
+            raise NotImplementedError(f"Error: pred_type={pred_type} is not currently supported.")          
 
-        x = th.sqrt(gamma_next) * denoised + th.sqrt(1 - gamma_next) * pred_noise
+        x = th.sqrt(gamma_next)*denoised+th.sqrt(1-gamma_next)*pred_noise
     return x
 
 
@@ -851,8 +866,8 @@ def sample_progdist(
     return x
 
 
-def get_eqv_reg_pair(inv_reg):
-        if inv_reg == 'H':
+def get_eqv_reg_pair(eqv_reg):
+        if eqv_reg == 'H':
             @th.no_grad()
             def aug_op(x):
                 return th.flip(x, [-1])
@@ -861,7 +876,7 @@ def get_eqv_reg_pair(inv_reg):
             def aug_op_inv(x):
                 return th.flip(x, [-1])
 
-        elif inv_reg == 'V':
+        elif eqv_reg == 'V':
             @th.no_grad()
             def aug_op(x):
                 return th.flip(x, [-2])
@@ -871,7 +886,7 @@ def get_eqv_reg_pair(inv_reg):
             def aug_op_inv(x):
                 return th.flip(x, [-2])
             
-        elif inv_reg == 'C4':
+        elif eqv_reg == 'C4':
             k = np.random.randint(1,4)
 
             @th.no_grad()
@@ -882,7 +897,7 @@ def get_eqv_reg_pair(inv_reg):
             def aug_op_inv(x):
                 return th.rot90(x, k = k, dims = [-2, -1])
             
-        elif inv_reg == 'D4':
+        elif eqv_reg == 'D4':
             k = np.random.randint(0, 4)
             v_flip = np.random.randint(0, 2)
 
@@ -902,10 +917,10 @@ def get_eqv_reg_pair(inv_reg):
 
 
 @th.no_grad()
-def get_sampling_eqv_aug_pair(inv_reg):
+def get_sampling_eqv_aug_pair(eqv_reg):
     """Returns original data from augmentation data pairs. 
     """
-    if inv_reg == 'H':
+    if eqv_reg == 'H':
         @th.no_grad()
         def aug_op(x):
             return th.cat([x, th.flip(x, [-1])], dim = 0)
@@ -919,7 +934,7 @@ def get_sampling_eqv_aug_pair(inv_reg):
         def para_aug(x):
             return th.cat([x, x], dim = 0)
         
-    elif inv_reg == 'V':
+    elif eqv_reg == 'V':
         @th.no_grad()
         def aug_op(x):
             return th.cat([x, th.flip(x, [-2])], dim = 0)
@@ -933,7 +948,7 @@ def get_sampling_eqv_aug_pair(inv_reg):
         def para_aug(x):
             return th.cat([x, x], dim = 0)
         
-    elif inv_reg == 'C4':
+    elif eqv_reg == 'C4':
         @th.no_grad()
         def aug_op(x):
             # return th.rot90(x, k = k, dims = [-1, -2])
@@ -953,7 +968,7 @@ def get_sampling_eqv_aug_pair(inv_reg):
         def para_aug(x):
             return th.cat([x]*4, dim = 0)
 
-    elif inv_reg == 'D4':
+    elif eqv_reg == 'D4':
         @th.no_grad()
         def aug_op(x):
             # return th.rot90(x, k = k, dims = [-1, -2])

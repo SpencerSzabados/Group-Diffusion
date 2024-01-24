@@ -56,7 +56,7 @@ def model_and_diffusion_defaults():
         use_new_attention_order=False,
         learn_sigma=False,
         weight_schedule="karras",
-        data_augment=False,
+        data_augment=0,
     )
     return res
 

@@ -86,7 +86,7 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         resblock_updown=False,
         use_new_attention_order=False,
-        data_augment=False,
+        data_augment=0,
     ):
         super().__init__()
 
