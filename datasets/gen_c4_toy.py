@@ -27,7 +27,7 @@ from torchvision import transforms
 
 
 # Directory 
-DATA_PATH = '/home/sszabados/datasets/c4_toy'
+DATA_PATH = '/home/sszabados/datasets/c4_toy_rot270'
 
 # Generation paramters
 HIGHT_WIDTH = 28 # Resolution of generated images
@@ -52,7 +52,7 @@ def gen_c4test(rot=0):
         image.save(os.path.join(DATA_PATH, f"{rand_cond}_{n}.JPEG"))
 
 
-def gen_c4test_samples():
+def sample_c4toy_pdf():
     # Generate reference image 
     colour = int(255*(COLOUR))
     image = np.zeros(shape=(HIGHT_WIDTH, HIGHT_WIDTH))
@@ -79,8 +79,7 @@ def gen_c4test_samples():
     
 
 def main():
-    gen_c4test(rot=0)
-    # gen_c4test_samples()
+    gen_c4test(rot=270)
 
 
 if __name__=="__main__":

@@ -32,7 +32,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 Example launch command:
-python fid_score --
+python fid_score.py --path "/home/datasets/fid_samples/" "/home/datasets/rot_mnist/" --batch_size 128 --device cuda:0 --img_size 28 --eqv C4
 """
 
 
@@ -457,6 +457,7 @@ def save_fid_stats(paths, batch_size, dims, img_size, device, num_workers=1, eqv
 
 
 def main():
+    print("\nCreating args parser...")
     args = parser.parse_args()
 
     if args.device is None:
@@ -487,6 +488,7 @@ def main():
                         eqv=args.eqv)
         return
 
+    print("Computing FID value...")
     fid_value = calculate_fid_given_paths(paths=args.path,
                                           batch_size=args.batch_size,
                                           device=device,
@@ -494,7 +496,7 @@ def main():
                                           img_size=args.img_size,
                                           num_workers=num_workers,
                                           eqv=args.eqv)
-    print('FID: ', fid_value)
+    print('\nFID: ', fid_value)
 
 
 if __name__ == '__main__':

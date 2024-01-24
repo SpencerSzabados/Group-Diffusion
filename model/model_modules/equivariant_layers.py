@@ -42,17 +42,6 @@ from groupy.gconv.pytorch_gconv.pooling import plane_group_spatial_max_pooling
     that is, reduced to a set of equivalance classes induced by desired group symmetry
     properties. The following blocks implement operations that gauarantee this behaviour.
 """
-
-class Vertical_Symmetric(nn.Module):
-    def forward(self, X):
-        _, _, h, w = X.shape
-        upper_channel = h//2
-        if not hasattr(self, 'upper_mask'):
-            self.upper_mask = nn.Parameter(th.tensor([1.0]* upper_channel + [0.0] * (h - upper_channel), device = X.device)[None, None, :, None], requires_grad = False)
-
-        return X * self.upper_mask + th.flip(X, dims=[-2]) * (1 - self.upper_mask)
-    
-
 class Vertical_Symmetric(nn.Module):
     def forward(self, X):
         _, _, h, w = X.shape

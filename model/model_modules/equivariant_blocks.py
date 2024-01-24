@@ -147,7 +147,6 @@ class GResBlock(TimestepBlock):
             self.skip_connection = gconv_nd(dims, self.g_equiv, self.g_input, self.g_input, self.in_channels, self.out_channels, kernel_size=1)
 
     def _forward(self, x, emb):
-
         if self.updown:
             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
             h = in_rest(x)

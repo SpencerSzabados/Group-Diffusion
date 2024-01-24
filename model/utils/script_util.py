@@ -33,12 +33,14 @@ def model_and_diffusion_defaults():
     Default paramter values for image training.
     """
     res = dict(
+        diff_type="pfode",
         g_equiv=False,
         g_input=None,
         g_output=None,
         sigma_min=0.002,
         sigma_max=80.0,
         image_size=64,
+        class_cond=False,
         num_channels=128,
         num_res_blocks=2,
         num_heads=4,
@@ -47,7 +49,6 @@ def model_and_diffusion_defaults():
         attention_resolutions="32,16,8",
         channel_mult="",
         dropout=0.0,
-        class_cond=False,
         use_checkpoint=False,
         use_scale_shift_norm=True,
         resblock_updown=False,
@@ -55,6 +56,7 @@ def model_and_diffusion_defaults():
         use_new_attention_order=False,
         learn_sigma=False,
         weight_schedule="karras",
+        data_augment=False,
     )
     return res
 
@@ -66,6 +68,7 @@ def create_model_and_diffusion(
     num_channels,
     num_res_blocks,
     channel_mult,
+    diff_type,
     g_equiv,
     g_input,
     g_output,
@@ -83,6 +86,8 @@ def create_model_and_diffusion(
     sigma_min=0.002,
     sigma_max=80.0,
     distillation=False,
+    data_augment=False,
+    aug_pip_arg=None,
 ):
     model = create_model(
         image_size,
@@ -104,13 +109,20 @@ def create_model_and_diffusion(
         resblock_updown=resblock_updown,
         use_fp16=use_fp16,
         use_new_attention_order=use_new_attention_order,
+        data_augment=data_augment,
     )
+
+    if not data_augment:
+        aug_pip_arg = None
+
     diffusion = KarrasDenoiser(
+        diff_type=diff_type,
         sigma_data=0.5,
         sigma_max=sigma_max,
         sigma_min=sigma_min,
         distillation=distillation,
         weight_schedule=weight_schedule,
+        aug_pip_arg=aug_pip_arg,
     )
     return model, diffusion
 
@@ -135,6 +147,7 @@ def create_model(
     resblock_updown=False,
     use_fp16=False,
     use_new_attention_order=False,
+    data_augment=False,
 ):
     if channel_mult == "":
         if image_size == 512:
@@ -179,6 +192,7 @@ def create_model(
         use_scale_shift_norm=use_scale_shift_norm,
         resblock_updown=resblock_updown,
         use_new_attention_order=use_new_attention_order,
+        data_augment=data_augment,
     )
 
 

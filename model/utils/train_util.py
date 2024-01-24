@@ -35,6 +35,7 @@ class TrainLoop:
         *,
         model,
         diffusion,
+        diff_type,
         data,
         batch_size,
         microbatch,
@@ -43,14 +44,19 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
+        pred_type='pfode',
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        start_ema=None,
+        eqv_reg=None,
+        data_augment=False,
     ):
         self.model = model
         self.diffusion = diffusion
+        self.pred_type = pred_type
         self.data = data
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
@@ -72,6 +78,9 @@ class TrainLoop:
         self.step = 0
         self.resume_step = 0
         self.global_batch = self.batch_size * dist.get_world_size()
+
+        self.target_ema = start_ema
+        self.eqv_reg = eqv_reg
 
         self.sync_cuda = th.cuda.is_available()
 
@@ -136,7 +145,6 @@ class TrainLoop:
 
     def _load_ema_parameters(self, rate):
         ema_params = copy.deepcopy(self.mp_trainer.master_params)
-
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
@@ -161,6 +169,8 @@ class TrainLoop:
                 opt_checkpoint, map_location=distribute_util.dev()
             )
             self.opt.load_state_dict(state_dict)
+        else:
+            raise FileNotFoundError(f"Cannot find checkpoint file at {opt_checkpoint}")
 
     def run_loop(self):
         saved = False
@@ -193,7 +203,7 @@ class TrainLoop:
                     self.model,
                     (40, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
                     steps=100,
-                    model_kwargs={}, #{'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)},
+                    model_kwargs={'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)},
                     device=distribute_util.dev(),
                     clip_denoised=True,
                     sampler='euler',
@@ -219,13 +229,17 @@ class TrainLoop:
             self.save()
 
     def run_step(self, batch, cond):
+        self._anneal_lr()
         self.forward_backward(batch, cond)
         took_step = self.mp_trainer.optimize(self.opt)
         if took_step:
             self._update_ema()
+            if self.eqv_reg:
+                self._update_target_ema()
             self.step += 1
         self._anneal_lr()
         self.log_step()
+        return took_step
     
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
@@ -244,7 +258,10 @@ class TrainLoop:
                 self.ddp_model,
                 micro,
                 t,
+                pred_type=self.pred_type,
                 model_kwargs=micro_cond,
+                target_model=self.target_model if self.eqv_reg else None,
+                eqv_reg=self.eqv_reg,
             )
 
             if last_batch or not self.use_ddp:
@@ -263,6 +280,18 @@ class TrainLoop:
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
             self.mp_trainer.backward(loss)
+
+    def _update_target_ema(self):
+        with th.no_grad():
+            update_ema(
+                self.target_model_master_params,
+                self.mp_trainer.master_params,
+                reate=self.target_ema
+            )
+            master_params_to_model_params(
+                self.target_model_param_groups_and_shapes,
+                self.target_model_master_params,
+            )
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -372,13 +401,13 @@ class CMTrainLoop(TrainLoop):
                     "loading model from checkpoint: {resume_target_checkpoint}..."
                 )
                 self.target_model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_target_checkpoint, map_location=dist_util.dev()
+                    distribute_util.load_state_dict(
+                        resume_target_checkpoint, map_location=distribute_util.dev()
                     ),
                 )
 
-        dist_util.sync_params(self.target_model.parameters())
-        dist_util.sync_params(self.target_model.buffers())
+        distribute_util.sync_params(self.target_model.parameters())
+        distribute_util.sync_params(self.target_model.buffers())
 
     def _load_and_sync_teacher_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -392,13 +421,13 @@ class CMTrainLoop(TrainLoop):
                     "loading model from checkpoint: {resume_teacher_checkpoint}..."
                 )
                 self.teacher_model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_teacher_checkpoint, map_location=dist_util.dev()
+                    distribute_util.load_state_dict(
+                        resume_teacher_checkpoint, map_location=distribute_util.dev()
                     ),
                 )
 
-        dist_util.sync_params(self.teacher_model.parameters())
-        dist_util.sync_params(self.teacher_model.buffers())
+        distribute_util.sync_params(self.teacher_model.parameters())
+        distribute_util.sync_params(self.teacher_model.buffers())
 
     def run_loop(self):
         saved = False
@@ -488,13 +517,13 @@ class CMTrainLoop(TrainLoop):
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(distribute_util.dev())
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
+                k: v[i : i + self.microbatch].to(distribute_util.dev())
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(micro.shape[0], distribute_util.dev())
 
             ema, num_scales = self.ema_scale_fn(self.global_step)
             if self.training_mode == "progdist":
@@ -635,6 +664,7 @@ def obtain_slurm_ckpt_dir():
     USER = os.environ['USER']
     ckpt_dir=f'/checkpoint/{USER}/{SLURM_JOB_ID}'
     return ckpt_dir
+
 
 def find_resume_checkpoint():
     # On your infrastructure, you may want to override this to automatically

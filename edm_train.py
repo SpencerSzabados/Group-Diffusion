@@ -1,6 +1,6 @@
 """
     Script for training a diffusion model on image data using EDM (https://github.com/NVlabs/edm)
-    methodology.
+    methodology. 
 """
 
 import argparse
@@ -25,6 +25,8 @@ def create_argparser():
         g_equiv=False,
         g_input=None,
         g_output=None,
+        diff_type='pfode',
+        eqv_reg=False,
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
@@ -32,6 +34,7 @@ def create_argparser():
         global_batch_size=2048,
         batch_size=-1,
         microbatch=-1,      # -1 disables microbatches
+        start_ema=None,
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
@@ -39,7 +42,8 @@ def create_argparser():
         use_fp16=False,
         fp16_scale_growth=1e-3,
         user_id='dummy',
-        slurm_id='-1'
+        slurm_id='-1',
+        data_augment=False,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
@@ -89,10 +93,12 @@ def main():
     TrainLoop(
         model=model,
         diffusion=diffusion,
+        diff_type=args.diff_type,
         data=data,
         batch_size=batch_size,
         microbatch=args.microbatch,
         lr=args.lr,
+        start_ema=args.start_ema if hasattr(args, 'start_ema') else None,
         ema_rate=args.ema_rate,
         log_interval=args.log_interval,
         save_interval=args.save_interval,
@@ -102,6 +108,7 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        data_augment=args.data_augment
     ).run_loop()
 
 

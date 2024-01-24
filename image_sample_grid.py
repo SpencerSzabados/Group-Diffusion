@@ -1,10 +1,6 @@
 """
-    EDM image (generation) sampling script used for generate a large batch of image
-    samples from a model and save them as a large numpy array. This can be used to 
-    produce samples for FID evaluation.
-
-    TODO: Add command line argument for generating either a .npz file archive or
-          directory full of .JPEG images.
+    Image (generation) sampling script used for generating a batch of image samples
+    from a model and save them as image grid.
 """
 
 import os
@@ -14,6 +10,7 @@ import numpy as np
 from model.utils import distribute_util
 import torch as th
 import torch.distributed as dist
+import torchvision
 
 from model import logger
 from model.utils.script_util import (
@@ -43,7 +40,6 @@ def create_argparser():
         model_path="",
         seed=42,
         ts="",
-        save_as="npy"
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
@@ -53,6 +49,10 @@ def create_argparser():
 
 def main():
     args = create_argparser().parse_args()
+
+    if args.batch_size > args.num_samples:
+        logger.log("batch_size > num_samples; reducing batch_size.")
+        args.batch_size = args.num_samples
 
     distribute_util.setup_dist()
     logger.configure()
@@ -86,12 +86,21 @@ def main():
     all_labels = []
     generator = get_generator(args.generator, args.num_samples, args.seed)
 
-    while len(all_images) * args.batch_size < args.num_samples:
+    # Code for performing incremental image sampling during training.
+    # TODO: Make this function more general and accept model paramters during sampling 
+    #       rather than the hard coded values used currently.
+    #       This sould be modified if training on a dataset of different resolution.
+    logger.log("generating samples...")
+
+    while len(all_images)*args.batch_size < args.num_samples:
         model_kwargs = {}
         if args.class_cond:
-            classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(args.batch_size,), device=distribute_util.dev()
-            )
+            classes = th.arange(start=0, end=9, dtype=int, device=distribute_util.dev())
+            i = 0
+            while len(classes) < args.batch_size and i < args.num_samples:
+                classes = classes.append[classes[i]]
+                i += 1
+            classes = classes.reshape(args.batch_size,)
             model_kwargs["y"] = classes
 
         sample = karras_sample(
@@ -112,9 +121,6 @@ def main():
             generator=generator,
             ts=ts,
         )
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        sample = sample.permute(0, 2, 3, 1)
-        sample = sample.contiguous()
 
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
@@ -127,21 +133,11 @@ def main():
             all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
         logger.log(f"created {len(all_images) * args.batch_size} samples")
 
-    arr = np.concatenate(all_images, axis=0)
-    arr = arr[: args.num_samples]
-    if args.class_cond:
-        label_arr = np.concatenate(all_labels, axis=0)
-        label_arr = label_arr[: args.num_samples]
-    if dist.get_rank() == 0:
-        shape_str = "x".join([str(x) for x in arr.shape])
-        out_path = os.path.join(logger.get_dir(), f"samples_{shape_str}.npz")
-        logger.log(f"saving to {out_path}")
-        if args.class_cond:
-            np.savez(out_path, arr, label_arr)
-        else:
-            np.savez(out_path, arr)
+    # Save the generated sample images
+    logger.log("sampled tensor shape: "+str(sample.shape))
+    grid_img = torchvision.utils.make_grid(sample, nrow = 10, normalize = True)
+    torchvision.utils.save_image(grid_img, f"tmp_imgs/generated_sample.pdf")
 
-    dist.barrier()
     logger.log("sampling complete")
 
 

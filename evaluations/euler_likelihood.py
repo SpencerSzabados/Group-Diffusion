@@ -122,8 +122,10 @@ class SDE(abc.ABC):
     
 
 class VPSDE(SDE):
-  def __init__(self, beta_min=0.1, beta_max=20, N=1000):
+  def __init__(self, sigma_min=0.1, sigma_max=20, N=1000):
     """Construct a Variance Preserving SDE.
+
+    Default values are configured for DDIM sde paramters.
 
     Args:
       beta_min: value of beta(0)
@@ -131,48 +133,52 @@ class VPSDE(SDE):
       N: number of discretization steps
     """
     super().__init__(N)
-    self.beta_min = beta_min
-    self.beta_max = beta_max
+    self.sigma_min = sigma_min
+    self.sigma_max = sigma_max
+    self.discrete_sigmas = get_sigmas_ddim(N)
     self.N = N
-    self.discrete_betas = th.linspace(beta_min / N, beta_max / N, N)
-    self.alphas = 1. - self.discrete_betas
-    self.alphas_cumprod = th.cumprod(self.alphas, dim=0)
-    self.sqrt_alphas_cumprod = th.sqrt(self.alphas_cumprod)
-    self.sqrt_1m_alphas_cumprod = th.sqrt(1. - self.alphas_cumprod)
 
-  @property
-  def T(self):
-    return 1
+    def get_sigmas_ddim(steps, ns=0.0002, ds=0.00025):
+        dt = 1 / steps
+        times = th.linspace(1., 0., steps + 1)
+        times = th.stack((times[:-1], (times[1:] - dt).clamp_(min=0)), dim = 0)
+        times = times.unbind(dim = -1)
+        sigmas = (th.cos((times+ns)/(1+ds)*th.pi/2))**2
+        return sigmas
 
-  def sde(self, x, t):
-    beta_t = self.beta_min + t * (self.beta_max - self.beta_min)
-    drift = -0.5 * beta_t[:, None, None, None] * x
-    diffusion = th.sqrt(beta_t)
-    return drift, diffusion
+    @property
+    def T(self):
+        return 1
 
-  def marginal_prob(self, x, t):
-    log_mean_coeff = -0.25 * t ** 2 * (self.beta_max - self.beta_min) - 0.5 * t * self.beta_min
-    mean = th.exp(log_mean_coeff[:, None, None, None]) * x
-    std = th.sqrt(1. - th.exp(2. * log_mean_coeff))
-    return mean, std
+    def sde(self, x, t):
+        beta_t = self.beta_min + t * (self.beta_max - self.beta_min)
+        drift = -0.5 * beta_t[:, None, None, None] * x
+        diffusion = th.sqrt(beta_t)
+        return drift, diffusion
 
-  def prior_sampling(self, shape):
-    return th.randn(*shape)
+    def marginal_prob(self, x, t):
+        log_mean_coeff = -0.25 * t ** 2 * (self.beta_max - self.beta_min) - 0.5 * t * self.beta_min
+        mean = th.exp(log_mean_coeff[:, None, None, None]) * x
+        std = th.sqrt(1. - th.exp(2. * log_mean_coeff))
+        return mean, std
 
-  def prior_logp(self, z):
-    shape = z.shape
-    N = np.prod(shape[1:])
-    logps = -N / 2. * np.log(2 * np.pi) - th.sum(z ** 2, dim=(1, 2, 3)) / 2.
-    return logps
+    def prior_sampling(self, shape):
+        return th.randn(*shape)
 
-  def discretize(self, x, t):
-    """DDPM discretization."""
-    timestep = (t * (self.N - 1) / self.T).long()
-    beta = self.discrete_betas.to(x.device)[timestep]
-    alpha = self.alphas.to(x.device)[timestep]
-    f = th.sqrt(alpha)[:, None, None, None] * x - x
-    G = th.sqrt(beta)
-    return f, G
+    def prior_logp(self, z):
+        shape = z.shape
+        N = np.prod(shape[1:])
+        logps = -N / 2. * np.log(2 * np.pi) - th.sum(z ** 2, dim=(1, 2, 3)) / 2.
+        return logps
+
+    def discretize(self, x, t):
+        """DDPM discretization."""
+        timestep = (t * (self.N - 1) / self.T).long()
+        beta = self.discrete_betas.to(x.device)[timestep]
+
+        f = th.sqrt(alpha)[:, None, None, None] * x - x
+        G = th.sqrt(beta)
+        return f, G
 
 
 class VESDE(SDE):
@@ -192,10 +198,9 @@ class VESDE(SDE):
 
     @property
     def T(self):
-        return 'inf'
+        return 1
 
     def sde(self, x, t):
-        # t = timestep/(self.sigma_max-self.sigma_min) # TODO: verify this scaling 
         sigma = self.sigma_min*(self.sigma_max/self.sigma_min)**t
         drift = th.zeros_like(x)
         diffusion = sigma * th.sqrt(th.tensor(2 * (np.log(self.sigma_max) - np.log(self.sigma_min)),
@@ -399,7 +404,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             """
 
             def score_fn(x, y, t):
-                score = score_cl.get_score(x, y, t)
+                score = score_cl.pfode_score(x, y, t)
                 return score
             
             return score_fn
@@ -431,13 +436,14 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             if y!=None:
                 y = y['y'].to(data.device)
             logp = th.zeros((shape[0],)).to(data.device)
-
+    
             # Run euler steps
             for t in tqdm(range(0,int(score_cl.steps))): 
                 _, x_t, dt = score_cl.euler_step(x_t, y, t)
                 
-                grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
-                torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
+                ## DEBUG
+                # grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
+                # torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
                 
                 drift, logp_grad = ode_func(x_t, y, t) 
                 
@@ -454,12 +460,6 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             z = x_t
             delta_logp = logp
             print("delta_logp: "+str(logp)) # DEBUG
-            # zero_prior = th.zeros_like(data)
-            # zero_prior_logp = sde.prior_logp(zero_prior)
-            # one_prior = th.ones_like(data)
-            # one_prior_logp = sde.prior_logp(one_prior)
-            # print("zero prior logp: "+str(zero_prior_logp))
-            # print("one prior logp: "+str(one_prior_logp))
             prior_logp = sde.prior_logp(z)
             print("prior_logp: "+str(prior_logp)) # DEBUG
             bpd = -(prior_logp-delta_logp)/np.log(2)

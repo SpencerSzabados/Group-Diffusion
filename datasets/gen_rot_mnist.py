@@ -18,11 +18,12 @@
 
 
 import os
+import random
 import numpy as np
 from PIL import Image
-
-import torchvision
 import torch as th
+import torchvision
+from torchvision import transforms
 from torchvision.datasets.utils import download_and_extract_archive
 
 
@@ -31,7 +32,7 @@ from torchvision.datasets.utils import download_and_extract_archive
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/rot_mnist_600/"
+data_dir = "/home/sszabados/datasets/rot_mnist_6000/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
@@ -79,7 +80,7 @@ def gen_rot_mnist_jpg(samples=600):
     print("Finished.")
 
 
-def gen_rot_mnist_npz(samples=600):
+def gen_rot_mnist_npy(samples=600):
     """Download the MNIST data if it doesn't exist in processed_folder already."""
     
     os.makedirs(raw_dir, exist_ok=True)
@@ -100,20 +101,26 @@ def gen_rot_mnist_npz(samples=600):
     )
     train = th.from_numpy(np.loadtxt(train_filename))
     test = th.from_numpy(np.loadtxt(test_filename))
-    train_data = train[:, :-1].reshape(-1, 28, 28, 1) 
+    train_data = train[:, :-1].reshape(-1, 28, 28).unsqueeze(1)
+    train_data = train_data.reshape(-1, 28, 28, 1)
     train_data = (train_data * 256).round().type(th.uint8)
     train_data = train_data[0:samples]
     train_labels = train[:, -1].type(th.uint8)
     train_labels = train_labels[0:samples]
     train_set = (train_data, train_labels)
     # we ignore the validation set
-    test_data = test[:, :-1].reshape(-1, 28, 28,1 )
+    test_data = test[:, :-1].reshape(-1, 28, 28).unsqueeze(1)
+    test_data = test_data.reshape(-1, 28, 28, 1)
     test_data = (test_data * 256).round().type(th.uint8)
     test_data = test_data[0:samples]
     test_labels = test[:, -1].type(th.uint8)
     test_labels = test_labels[0:samples]
     test_set = (test_data, test_labels)
     print("Finished downloading files.")
+
+    # DEBUG
+    # grid_img = torchvision.utils.make_grid(train_data[0:5].reshape(5,1,28,28), nrow = 1, normalize = True)
+    # torchvision.utils.save_image(grid_img, f'tmp_imgs/rot_mnist_sample.pdf')
 
     print("Saving npz files...")
     with open(os.path.join(processed_dir, "train_images.npy"), "wb") as f:
@@ -126,9 +133,44 @@ def gen_rot_mnist_npz(samples=600):
         np.save(f, test_labels.numpy())
     print("Finished.")
 
+
+def sample_rot_mnist_pdf(num_samples=10):
+    num_classes = 10
+    class_images = {}
+    # Load image dataset from data_dir 
+    # Assuming 'dataset' is a 3D array with shape (height, width, channels)
+    images = [f for f in os.listdir(data_dir) if f.lower().endswith(('.jpg', '.jpeg'))]
+    num_images = len(images)
+    resolution = Image.open(data_dir+images[0]).size[0]
+    print(str(num_images)+", "+str(np.array(Image.open(data_dir+images[0])).shape))
+    sample_images = th.zeros((num_samples, num_classes, 3, resolution, resolution))
+
+    i = 0
+    for image in images:
+        if i < num_samples*100:
+            label = int(image.split('_')[0])
+            if label not in class_images:
+                class_images[label] = []
+            class_images[label].append(image)
+            i += 1
+        else:
+            break
+
+    transform = transforms.Compose([transforms.PILToTensor()])
+    for label, images in class_images.items():
+        selected_images = random.sample(images, num_samples)
+        for i in range(len(selected_images)):
+            sample_images[i,label,:,:,:] = transform(Image.open(data_dir+selected_images[i]))
+     
+    sample_images = sample_images/256
+
+    grid_img = torchvision.utils.make_grid(sample_images.reshape(num_samples*num_classes, 3, resolution, resolution), nrow=num_classes, normalize=True)
+    torchvision.utils.save_image(grid_img, f'tmp_imgs/rot_mnist_sample.pdf')
+
+
 def main():
     # gen_rot_mnist_jpg(samples=6000)
-    gen_rot_mnist_npz(samples=600)
+    gen_rot_mnist_npy(samples=6000)
 
 
 if __name__ == '__main__':

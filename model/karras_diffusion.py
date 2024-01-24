@@ -1,6 +1,8 @@
 """
 Based on: https://github.com/crowsonkb/k-diffusion
 """
+
+
 import random
 
 import numpy as np
@@ -13,6 +15,9 @@ from .utils import distribute_util
 from .utils.nn import mean_flat, append_dims, append_zero
 from .utils.random_util import get_generator
 from .auxilary_mtd import append_dims, x2v_sin, dir_switcher_sin
+from .augment import AugmentPipe
+
+from tqdm.auto import tqdm
 
 
 def get_weightings(weight_schedule, snrs, sigma_data):
@@ -34,6 +39,7 @@ def get_weightings(weight_schedule, snrs, sigma_data):
 class KarrasDenoiser:
     def __init__(
         self,
+        diff_type="pfode",
         sigma_data: float = 0.5,
         sigma_max=80.0,
         sigma_min=0.002,
@@ -41,7 +47,9 @@ class KarrasDenoiser:
         weight_schedule="karras",
         distillation=False,
         loss_norm="lpips",
+        aug_pip_arg=None
     ):
+        self.diff_type = diff_type
         self.sigma_data = sigma_data
         self.sigma_max = sigma_max
         self.sigma_min = sigma_min
@@ -52,6 +60,8 @@ class KarrasDenoiser:
             self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")
         self.rho = rho
         self.num_timesteps = 40
+        if aug_pip_arg:
+            self.aug_pip = AugmentPipe(**aug_pip_arg)
 
     def get_snr(self, sigmas):
         return sigmas**-2
@@ -77,33 +87,66 @@ class KarrasDenoiser:
         c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
         return c_skip, c_out, c_in
     
-    def training_losses(self, model, x_start, sigmas, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, sigmas, pred_type='x', cond_noise=0, model_kwargs=None, noise=None, eqv_reg=None, target_model=None):
+        with th.no_grad():
+            if hasattr(self, 'aug_pip'):
+                x_start, augment_labels = self.aug_pip(x_start)
+                model_kwargs['augment_labels'] = augment_labels
         if model_kwargs is None:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
 
-        terms = {}
-
         dims = x_start.ndim
-        x_t = x_start + noise * append_dims(sigmas, dims)
+
+        if self.diff_type=="ddim":
+            weights = 1
+            alphas = append_dims(th.sqrt(gamma(sigmas)), dims)
+            x_t = alphas*x_start + noise*append_dims(th.sqrt(1-gamma(sigmas)), dims)
+        elif self.diff_type=="pfode":
+            snrs = self.get_snr(sigmas)
+            weights = append_dims(
+                get_weightings(self.weight_schedule, snrs, self.sigma_data), dims
+            )
+            x_t = x_start + noise*append_dims(sigmas, dims)
+        
         model_output, denoised = self.denoise(model, x_t, sigmas, **model_kwargs)
+
+        target_model_ouput = None
+        if target_model:
+            with th.no_grad():
+                aug_op, aug_op_inv = get_eqv_reg_pair(eqv_reg)
+                
+                # 1) aug x_t according to inv_reg
+                aug_x_t = aug_op(x_t)
+
+                # 2) compute denoised of aug_x_t using target model
+                aug_model_output, aug_denoised = self.denoise(target_model, aug_x_t, sigmas, **model_kwargs)
+
+                # 3) apply reverse aug over aug_denoised
+                # inv_aug_denoised = aug_op_inv(aug_denoised.detach())
+                target_model_ouput = aug_op_inv(aug_model_output.detach())
 
         snrs = self.get_snr(sigmas)
         weights = append_dims(
             get_weightings(self.weight_schedule, snrs, self.sigma_data), dims
         )
 
-        # print(denoised)
-        terms["xs_mse"] = mean_flat((denoised - x_start) ** 2)
-        terms["mse"] = mean_flat(weights * (denoised - x_start) ** 2)
-
-        if "vb" in terms:
-            terms["loss"] = terms["mse"] + terms["vb"]
+        terms = {}
+        if pred_type == 'eps':
+            assert self.diff_type != 'pfode', 'pfode implementation is not for eps prediction conf' 
+            terms["mse"] = mean_flat(weights * (denoised - noise) ** 2)
         else:
-            terms["loss"] = terms["mse"]
+            terms["mse"] = mean_flat(weights * (denoised - x_start) ** 2)
 
-        return terms
+        if target_model_ouput is not None:
+            # terms["mse_inv"] = mean_flat(weights * (denoised - inv_aug_denoised) ** 2)
+            terms["mse_inv"] = mean_flat((model_output-target_model_ouput)**2)
+            terms["loss"] = terms["mse"] + terms["mse_inv"]
+        else:
+             terms["loss"] = terms["mse"]
+
+        return terms   
     
     def consistency_losses(
         self,
@@ -435,6 +478,20 @@ def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0, device="cpu"):
     return append_zero(sigmas).to(device)
 
 
+def gamma(t, ns=0.0002, ds=0.00025):
+    """Given time t [0,1] compute DDIM sigma time parameterization values."""
+    return  (th.cos((t+ns)/(1+ds)*th.pi/2))**2
+
+
+def get_sigmas_ddim(steps, device):
+    """Returns DDIM spaced time step intervals that are later scaled using gamma() function."""
+    dt = 1./steps
+    times = th.linspace(1., 0., steps+1, device=device)
+    times = th.stack((times[:-1], (times[1:]-dt).clamp_(min=0)), dim=0)
+    times = times.unbind(dim = -1)
+    return times
+
+
 def to_d(x, sigma, denoised):
     """Converts a denoiser output to a Karras ODE derivative."""
     return (x - denoised) / append_dims(sigma, x.ndim)
@@ -651,6 +708,71 @@ def sample_dpm(
 
 
 @th.no_grad()
+def sample_ddim(
+    denoiser,
+    x,
+    sigmas,
+    generator,
+    inv_traj = None,
+    progress=False,
+    callback=None,
+    s_churn=0.0,
+    s_tmin=0.0,
+    s_tmax=float("inf"),
+    s_noise=1.0,
+    self_cond = False,
+    pred_type = None,
+):
+    """Implements DDIM sampling for models trained using DDIM scheme."""
+    if self_cond and inv_traj is not None:
+        raise NotImplementedError
+        
+    s_in = x.new_ones([x.shape[0]])
+    time_pairs = sigmas
+    extra_input = dict()
+    x_self_cond = None
+
+    extra_input_ = dict()
+    for k in extra_input:
+        print(k)
+        extra_input_[k] = para_aug(extra_input[k])
+
+    if inv_traj is not None:
+        aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(inv_traj)
+
+    for time, time_next in tqdm(time_pairs):
+        gamma_now = gamma(time)
+        gamma_next = gamma(time_next)
+
+        if pred_type == 'x':
+            if inv_traj is not None:
+                denoised = aug_op_inv(
+                    denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), x_self_cond=x_self_cond,  extra_ipt = extra_input_)
+                )
+            else:
+                denoised = denoiser(x_t = x, sigma = time * s_in, x_self_cond = x_self_cond, extra_ipt = extra_input)
+            if self_cond:
+                x_self_cond = denoised
+            denoised.clamp_(-1, 1)
+            pred_noise = (x - th.sqrt(gamma_now) * denoised) / th.sqrt(1- gamma_now)
+        elif pred_type == 'eps':
+            if inv_traj is not None:
+                pred_noise = aug_op_inv(
+                    denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), x_self_cond=x_self_cond,  extra_ipt = extra_input_)
+                )
+            else:
+                pred_noise = denoiser(x_t = x, sigma = time * s_in, x_self_cond = x_self_cond, extra_ipt = extra_input)
+            denoised = (x - th.sqrt(1- gamma_now) * pred_noise) / th.sqrt(gamma_now)           
+            if self_cond:
+                x_self_cond = denoised
+        else:
+            raise NotImplementedError(f'{pred_type} not implemented')
+
+        x = th.sqrt(gamma_next) * denoised + th.sqrt(1 - gamma_next) * pred_noise
+    return x
+
+
+@th.no_grad()
 def sample_onestep(
     distiller,
     x,
@@ -727,6 +849,143 @@ def sample_progdist(
         x = x + d * dt
 
     return x
+
+
+def get_eqv_reg_pair(inv_reg):
+        if inv_reg == 'H':
+            @th.no_grad()
+            def aug_op(x):
+                return th.flip(x, [-1])
+
+            @th.no_grad()
+            def aug_op_inv(x):
+                return th.flip(x, [-1])
+
+        elif inv_reg == 'V':
+            @th.no_grad()
+            def aug_op(x):
+                return th.flip(x, [-2])
+            
+            
+            @th.no_grad()
+            def aug_op_inv(x):
+                return th.flip(x, [-2])
+            
+        elif inv_reg == 'C4':
+            k = np.random.randint(1,4)
+
+            @th.no_grad()
+            def aug_op(x):
+                return th.rot90(x, k = k, dims = [-1, -2])
+            
+            @th.no_grad()
+            def aug_op_inv(x):
+                return th.rot90(x, k = k, dims = [-2, -1])
+            
+        elif inv_reg == 'D4':
+            k = np.random.randint(0, 4)
+            v_flip = np.random.randint(0, 2)
+
+            @th.no_grad()
+            def aug_op(x):
+                return th.rot90(th.flip(x, [-2]) if v_flip else x, k = k, dims = [-1, -2])
+            
+            @th.no_grad()
+            def aug_op_inv(x):
+                x_ = th.rot90(x, k = k, dims = [-2, -1])
+                return th.flip(x_, [-2]) if v_flip else x_
+
+        else:
+            raise NotImplementedError
+        
+        return aug_op, aug_op_inv
+
+
+@th.no_grad()
+def get_sampling_eqv_aug_pair(inv_reg):
+    """Returns original data from augmentation data pairs. 
+    """
+    if inv_reg == 'H':
+        @th.no_grad()
+        def aug_op(x):
+            return th.cat([x, th.flip(x, [-1])], dim = 0)
+
+        @th.no_grad()
+        def aug_op_inv(x):
+            assert x.size(0) % 2 == 0, 'invalid batch size '
+            return  0.5 * (x[:x.size(0)//2] + th.flip(x[x.size(0)//2:], [-1]))
+        
+        @th.no_grad()
+        def para_aug(x):
+            return th.cat([x, x], dim = 0)
+        
+    elif inv_reg == 'V':
+        @th.no_grad()
+        def aug_op(x):
+            return th.cat([x, th.flip(x, [-2])], dim = 0)
+        
+        @th.no_grad()
+        def aug_op_inv(x):
+            assert x.size(0) % 2 == 0, 'invalid batch size '
+            return 0.5 * (x[:x.size(0)//2] + th.flip(x[x.size(0)//2:], [-2]))
+
+        @th.no_grad()
+        def para_aug(x):
+            return th.cat([x, x], dim = 0)
+        
+    elif inv_reg == 'C4':
+        @th.no_grad()
+        def aug_op(x):
+            # return th.rot90(x, k = k, dims = [-1, -2])
+            return th.cat([th.rot90(x, k = k, dims = [-1, -2]) for k in range(4)], dim = 0)
+        
+        @th.no_grad()
+        def aug_op_inv(x):
+            assert x.size(0) % 4 == 0, 'invalid batch size '
+            batch_size = x.size(0)//4
+            x_ = x[:batch_size]
+
+            for k in range(1, 4):
+                x_ += th.rot90(x[batch_size * k: batch_size * (k+1)], k = k, dims = [-2, -1])
+            return 0.25 * x_
+        
+        @th.no_grad()
+        def para_aug(x):
+            return th.cat([x]*4, dim = 0)
+
+    elif inv_reg == 'D4':
+        @th.no_grad()
+        def aug_op(x):
+            # return th.rot90(x, k = k, dims = [-1, -2])
+            return th.cat(
+                [th.rot90(x, k = k, dims = [-1, -2]) for k in range(4)] + \
+                [th.rot90(th.flip(x, dims = [-2]), k = k, dims = [-1, -2]) for k in range(4)], 
+            dim = 0)
+        
+        @th.no_grad()
+        def aug_op_inv(x):
+            assert x.size(0) % 8 == 0, 'invalid batch size '
+            batch_size = x.size(0)//8
+            x_ =  0.125* x[:batch_size]
+
+            for k in range(1, 4):
+                x_ +=  0.125 * th.rot90(x[batch_size * k: batch_size * (k+1)], k = k, dims = [-2, -1])
+
+            for k in range(4, 8):
+                x_ +=  0.125 * th.flip(
+                    th.rot90(x[batch_size * k: batch_size * (k+1)], k = k-4, dims = [-2, -1]),
+                    dims = [-2],
+                )
+
+            return x_
+        
+        @th.no_grad()
+        def para_aug(x):
+            return th.cat([x]*8, dim = 0)
+    else:
+        raise NotImplementedError
+    
+    return aug_op, aug_op_inv, para_aug
 
 
 @th.no_grad()

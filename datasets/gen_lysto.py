@@ -8,7 +8,11 @@
 import os
 import re
 import h5py
+import random
 import numpy as np
+import torch as th
+import torchvision
+from torchvision import transforms
 from PIL import Image
 
 
@@ -16,7 +20,7 @@ from PIL import Image
 h5_data_dir = "/home/sszabados/datasets/lysto/"
 h5_dataset_name = "training.h5"
 label_dir = "/home/sszabados/datasets/lysto/"
-data_dir = "/home/sszabados/datasets/lysto64_crop/"
+data_dir = "/home/sszabados/datasets/lysto64_random_crop/"
 labels_name = "training_labels.csv"
 npy_dataset_name = "train_images.npy" 
 npy_labels_name = "train_labels.npy"
@@ -27,11 +31,6 @@ def convert_h5_npy():
     """
     Open lysto h5 file archive and convert it to a npy dataset file in native resolution.
     """
-    # Open and convert csv labels to npy array
-    # csv_labels = pd.read_csv(label_dir+labels_name)
-    # npy_labels = csv_labels.to_numpy()
-    # np.save(label_dir+npy_labels_name, npy_labels)
-
     # Open the HDF5 file
     h5_dataset = h5py.File(h5_data_dir+h5_dataset_name, 'r')
     images = h5_dataset['x']
@@ -109,6 +108,41 @@ def gen_lysto_center_crop_npy(resolution=299):
     np.save(data_dir+npy_dataset_name, scaled_dataset)  
 
 
+def gen_lysto_random_crop_npy(resolution=299, aug_mul=1):
+    # Ensure the output directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(data_dir+npy_dataset_name)
+    org_labels = np.load(label_dir+npy_labels_name)
+    # Create an empty array for downscaled images
+    scaled_dataset = np.empty((org_dataset.shape[0]*aug_mul, resolution, resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
+    scaled_labels = np.repeat(org_labels, aug_mul)
+    for i in range(org_dataset.shape[0]):
+        for j in range(0,aug_mul):
+            image = Image.fromarray(org_dataset[i])
+
+            # Calculate cropping parameters to randomly crop image
+            width, height = image.size
+            top_x = width-resolution
+            top_y = height-resolution
+            left = np.random.randint(0, top_x)
+            top = np.random.randint(0, top_y)
+            right = left+width
+            bottom = top+height
+
+            # Perform center crop
+            img_cropped = image.crop((left, top, right, bottom))
+
+            # Resize the cropped image to the target size
+            # img_resized = img_cropped.resize((resolution, resolution), Image.LANCZOS)
+            scaled_dataset[i] = np.array(img_cropped)
+
+    np.save(data_dir+npy_labels_name, scaled_labels)
+    np.save(data_dir+npy_dataset_name, scaled_dataset) 
+
+
 def convert_npy_JPG():
     # Load the .npy dataset
     # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
@@ -130,7 +164,7 @@ def gen_lysto_JPG(resolution=299):
     # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
     org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
     labels = np.load(str(data_dir)+str(npy_organ_names))
-    # Create an empty array for downscaled images
+   
     for i in range(org_dataset.shape[0]):
         image = Image.fromarray(org_dataset[i])
         scaled_image = image.resize((resolution, resolution), Image.LANCZOS)
@@ -148,7 +182,6 @@ def gen_lysto_center_crop_JPG(resolution=299):
     labels = np.load(str(data_dir)+str(npy_organ_names))
     # Create an empty array for downscaled images
     for i in range(org_dataset.shape[0]):
-
         image = Image.fromarray(org_dataset[i])
 
         # Calculate cropping parameters to center crop
@@ -168,8 +201,73 @@ def gen_lysto_center_crop_JPG(resolution=299):
         img_cropped.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
 
 
+def gen_lysto_random_crop_JPG(resolution=299, aug_mul=1):
+    # Ensure the output directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
+    
+    for i in range(org_dataset.shape[0]):
+        for j in range(0,aug_mul):
+            image = Image.fromarray(org_dataset[i])
+
+            # Calculate cropping parameters to randomly crop image
+            width, height = image.size
+            top_x = width-resolution
+            top_y = height-resolution
+            left = np.random.randint(0, top_x)
+            top = np.random.randint(0, top_y)
+            right = left+width
+            bottom = top+height
+
+            # Perform center crop
+            img_cropped = image.crop((left, top, right, bottom))
+
+            # Resize the cropped image to the target size
+            # img_resized = img_cropped.resize((resolution, resolution), Image.LANCZOS)
+
+            # Save the result to the output directory
+            img_cropped.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i+j*org_dataset.shape[0]}.JPEG"))
+
+
+def sample_lysto(num_samples=10, num_classes=3):
+    class_images = {}
+    # Load image dataset from data_dir 
+    # Assuming 'dataset' is a 3D array with shape (height, width, channels)
+    images = [f for f in os.listdir(data_dir+"train_images/") if f.lower().endswith(('.jpg', '.jpeg'))]
+    num_images = len(images)
+    resolution = Image.open(data_dir+"train_images/"+images[0]).size[0]
+    print(str(num_images)+", "+str(np.array(Image.open(data_dir+"train_images/"+images[0])).shape))
+    sample_images = th.zeros((num_samples*num_classes, 3, resolution, resolution))
+
+    i = 0
+    for image in images:
+        if i < num_samples*100:
+            label = int(image.split('_')[0])
+            if label not in class_images:
+                class_images[label] = []
+            class_images[label].append(image)
+            i += 1
+        else:
+            break
+
+    transform = transforms.Compose([transforms.PILToTensor()])
+    for label, images in class_images.items():
+        selected_images = random.sample(images, num_samples*num_classes)
+        for i in range(len(selected_images)):
+            sample_images[i] = transform(Image.open(data_dir+"train_images/"+selected_images[i]))
+        
+    sample_images = sample_images/256
+
+    grid_img = torchvision.utils.make_grid(sample_images, nrow=num_samples*num_classes, normalize=True)
+    torchvision.utils.save_image(grid_img, f'tmp_imgs/lysto_sample_1.pdf')
+
+
 if __name__=="__main__":
     convert_h5_npy()
-    gen_lysto_center_crop_npy(resolution=64)
+    gen_lysto_center_crop_npy(resolution=128)
     convert_npy_JPG()
 

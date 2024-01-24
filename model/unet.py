@@ -70,7 +70,7 @@ class UNetModel(nn.Module):
         out_channels,
         num_res_blocks,
         attention_resolutions,
-        g_equiv=True, # TODO - verify this argument is changed based on launch options
+        g_equiv=False, # TODO - verify this argument is changed based on launch options
         g_input=None,
         g_output=None,
         dropout=0,
@@ -86,6 +86,7 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         resblock_updown=False,
         use_new_attention_order=False,
+        data_augment=False,
     ):
         super().__init__()
 
