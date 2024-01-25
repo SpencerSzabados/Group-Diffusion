@@ -5,6 +5,9 @@
 """
 
 import os
+from pathlib import Path
+from PIL import Image
+
 import argparse
 from model import logger
 from model.image_dataset_loader import load_data
@@ -61,6 +64,7 @@ def create_argparser():
 def calculate_fid(diffusion, model, args, **kwargs):
     logger.log("Called calculate_fid.")
     logger.log("Sampling images...")
+    Path(args.dir2gen).mkdir(parents=True, exist_ok=True)
     if args.sampler == "multistep":
         assert len(args.ts) > 0
         ts = tuple(int(x) for x in args.ts.split(","))
@@ -120,7 +124,7 @@ def calculate_fid(diffusion, model, args, **kwargs):
         label_arr = label_arr[: args.num_samples]
     if dist.get_rank() == 0:
         shape_str = "x".join([str(x) for x in arr.shape])
-        out_path = os.path.join(logger.get_dir(), f"samples_{shape_str}.npz")
+        out_path = os.path.join(args.dir2gen, f"samples_{shape_str}.npz")
         logger.log(f"saving to {out_path}")
         if args.class_cond:
             np.savez(out_path, arr, label_arr)
@@ -130,11 +134,22 @@ def calculate_fid(diffusion, model, args, **kwargs):
     dist.barrier()
     logger.log("sampling complete")
 
+    logger.log("extracting images...")
+    filename = Path(args.dir2gen).stem
+    dir2img = f"{logger.get_dir()}/{filename}_imgs"
+    Path(dir2img).mkdir(parents=True, exist_ok=True)
+    imgs = dict(np.load(args.dir2gen))['arr_0']
+    num_img = len(imgs)
+    for i in range(num_img):
+        im = Image.fromarray(np.squeeze(imgs[i]))
+        im.save(os.path.join(dir2img, f'{i}.JPEG'))
+    logger.info(f'Image extraction completed (Total: {num_img})')
+
     logger.log("Computing current fid...")
     fid_value = 0
     try:
         fid_value = calculate_fid_given_paths(
-            paths=[kwargs.dir2ref, kwargs.dir2gen],
+            paths=[kwargs.dir2ref, dir2img],
             batch_size=args.batch_size,
             device='cuda',
             dims=2048,
@@ -145,7 +160,6 @@ def calculate_fid(diffusion, model, args, **kwargs):
         fid_value = np.inf
     print(f"Steps: {kwargs.steps}, FID: {fid_value}")
     return fid_value
-
 
 def main():
     logger.log("Creating argparser...")

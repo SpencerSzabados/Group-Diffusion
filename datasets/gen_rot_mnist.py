@@ -25,6 +25,7 @@ import torch as th
 import torchvision
 from torchvision import transforms
 from torchvision.datasets.utils import download_and_extract_archive
+from torchvision import datasets
 
 
 ### Preprocess dataset 
@@ -32,12 +33,28 @@ from torchvision.datasets.utils import download_and_extract_archive
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/rot_mnist_6000/"
+data_dir = "/home/sszabados/datasets/c4_mnist_6000/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
                  "0f9a947ff3d30e95cd685462cbf3b847")]
 
+
+def gen_rot_mnist_c4_jpg(samples=600):
+    """
+        Create rotated MNIST dataset under C4 group action. This does not augment the dataset,
+        rather each image is randomly rotated by one of {0,pi/2,pi,3pi/2} radians.
+    """
+
+    mnist_dataset = datasets.MNIST(train=True, root=raw_dir, download=True)
+
+    for i in range(min(samples, len(mnist_dataset))):
+        image, target = mnist_dataset[i]
+        # Select random rotation angle
+        k = th.randint(low=0, high=4, size=(1,), dtype=int)
+        image = image.rotate(k, expand=False)
+        image.save(os.path.join(data_dir, f"{target}_{i}.JPEG"))
+        
 
 def gen_rot_mnist_jpg(samples=600):
     """Download the MNIST data if it doesn't exist in processed_folder already."""
@@ -170,7 +187,8 @@ def sample_rot_mnist_pdf(num_samples=10):
 
 def main():
     # gen_rot_mnist_jpg(samples=6000)
-    gen_rot_mnist_npy(samples=6000)
+    # gen_rot_mnist_npy(samples=6000)
+    gen_rot_mnist_c4_jpg(samples=6000)
 
 
 if __name__ == '__main__':
