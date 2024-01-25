@@ -14,6 +14,9 @@ OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/c4toy_example_non_eqv python edm
 # Training using DDIM model
 OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/c4toy_example_eqv_ddim python edm_train.py --g_equiv True --g_input Z2_K --g_output C4_K --diff_type ddim --data_augment 0 --eqv_reg None --pred_type x --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 256 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 1000 --data_dir /home/datasets/c4_toy
 
+# Training using DDIM and incremental FID sampling 
+OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/c4toy_example_eqv_ddim python edm_train_fid.py --g_equiv True --g_input Z2_K --g_output C4_K --diff_type ddim --sampler ddim --data_augment 0 --eqv_reg None --pred_type x --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 256 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 1000 --sampling_interval 1000 --data_dir /home/datasets/c4_toy --resume_checkpoint /home/checkpoints/Group-Diffusion/c4toy_example_eqv_ddim/
+
 
 ######################################################################################
 # Training group equivariant EDM model on class-conditional Rot-MNIST

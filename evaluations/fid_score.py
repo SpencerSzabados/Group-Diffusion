@@ -56,7 +56,7 @@ except ImportError:
     def tqdm(x):
         return x
 
-from inception import InceptionV3
+from .inception import InceptionV3
 
 ## Global arguments
 #------------------------------------------------
@@ -306,7 +306,7 @@ def calculate_activation_statistics(files, model, batch_size=64, dims=2048, img_
     return mu, sigma
 
 
-def compute_statistics_of_path(path, model, batch_size, dims, img_size, device,
+def calculate_statistics_of_path(path, model, batch_size, dims, img_size, device,
                                num_workers=1, eqv='Z2', gen_op=None):
     if path.endswith('.npz'):
         with np.load(path) as f:
@@ -337,11 +337,11 @@ def calculate_fid_given_paths(paths, batch_size, device, dims, img_size, num_wor
 
     cache_file_dir = os.path.join(paths[0], f'cache_dims_{dims}_size_{img_size}_{eqv}.npz')
 
-    m1, s1 = compute_statistics_of_path_cache(paths[0], cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv)
+    m1, s1 = calculate_statistics_of_path_cache(paths[0], cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv)
 
     gen_cache_file_dir = os.path.join(paths[1], f'cache_dims_{dims}_size_{img_size}_gen_Z2.npz')
 
-    m2, s2 = compute_statistics_of_path(paths[1], model, batch_size,
+    m2, s2 = calculate_statistics_of_path(paths[1], model, batch_size,
                                         dims, img_size, device, num_workers, eqv='Z2') # eqv='Z2' since we assume the model is generating a eqv invariant distribution
     
     np.savez(gen_cache_file_dir, mu=m2, sigma=s2)
@@ -351,12 +351,12 @@ def calculate_fid_given_paths(paths, batch_size, device, dims, img_size, num_wor
     return fid_value
 
 
-def compute_statistics_of_path_cache(path, cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv, gen_op = None):
+def calculate_statistics_of_path_cache(path, cache_file_dir, model, batch_size, dims, img_size, device, num_workers, eqv, gen_op = None):
     if os.path.exists(cache_file_dir):
-        m, s = compute_statistics_of_path(cache_file_dir, model, batch_size,
+        m, s = calculate_statistics_of_path(cache_file_dir, model, batch_size,
                                         dims, img_size, device, num_workers, eqv = eqv, gen_op = gen_op)
     else:
-        m, s = compute_statistics_of_path(path, model, batch_size,
+        m, s = calculate_statistics_of_path(path, model, batch_size,
                                         dims, img_size, device, num_workers, eqv = eqv, gen_op = gen_op)
         np.savez(cache_file_dir, mu=m, sigma=s)
     return m, s
@@ -379,7 +379,7 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
     model = InceptionV3([block_idx]).to(device)
 
     gen_Z2_cache_file_dir = os.path.join(path, f'cache_dims_{dims}_gen_Z2.npz')
-    m0, s0 = compute_statistics_of_path_cache(path, gen_Z2_cache_file_dir, \
+    m0, s0 = calculate_statistics_of_path_cache(path, gen_Z2_cache_file_dir, \
                                               model, batch_size, dims, device, num_workers, 'Z2')
     
     mean_var_list.append([m0, s0])
@@ -389,7 +389,7 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
             return torch.flip(x, dims = [-2])
 
         gen_V_cache_file_dir = os.path.join(path, f'cache_dims_{dims}_gen_V.npz')
-        m_, s_ = compute_statistics_of_path_cache(path, gen_V_cache_file_dir, \
+        m_, s_ = calculate_statistics_of_path_cache(path, gen_V_cache_file_dir, \
                                               model, batch_size, dims, device, num_workers, 'Z2', gen_op)
         mean_var_list.append([m_, s_])
     
@@ -398,14 +398,14 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
             return torch.flip(x, dims = [-1])
 
         gen_H_cache_file_dir = os.path.join(path, f'cache_dims_{dims}_gen_H.npz')
-        m_, s_ = compute_statistics_of_path_cache(path, gen_H_cache_file_dir, \
+        m_, s_ = calculate_statistics_of_path_cache(path, gen_H_cache_file_dir, \
                                               model, batch_size, dims, device, num_workers, 'Z2', gen_op)
         mean_var_list.append([m_, s_])
       
     if eqv == 'C4':
         for k in range(1, 4):
             gen_cache_file_dir = os.path.join(path, f'cache_dims_{dims}_gen_{int(90 * k)}.npz')
-            m_, s_ = compute_statistics_of_path_cache(path, gen_cache_file_dir, \
+            m_, s_ = calculate_statistics_of_path_cache(path, gen_cache_file_dir, \
                                                 model, batch_size, dims, device, num_workers, 'Z2', 
                                                 lambda x: torch.rot90(x, k = k, dims=[-1, -2]))
             mean_var_list.append([m_, s_])
@@ -413,13 +413,13 @@ def calculate_eqv_fid_given_paths(path, batch_size, device, dims, num_workers=1,
     if eqv == 'D4':
         for k in range(1, 4):
             gen_cache_file_dir = os.path.join(path, f'cache_dims_{dims}_gen_{int(90 * k)}.npz')
-            m_, s_ = compute_statistics_of_path_cache(path, gen_cache_file_dir, \
+            m_, s_ = calculate_statistics_of_path_cache(path, gen_cache_file_dir, \
                                                 model, batch_size, dims, device, num_workers, 'Z2', 
                                                 lambda x: torch.rot90(x, k = k, dims=[-1, -2]))
 
             mean_var_list.append([m_, s_])
             
-            m_, s_ = compute_statistics_of_path_cache(path, gen_cache_file_dir, \
+            m_, s_ = calculate_statistics_of_path_cache(path, gen_cache_file_dir, \
                                                 model, batch_size, dims, device, num_workers, 'Z2', 
                                                 lambda x: torch.rot90(torch.flip(x, dim = [-2]), k = k, dims=[-1, -2]))
 
@@ -450,7 +450,7 @@ def save_fid_stats(paths, batch_size, dims, img_size, device, num_workers=1, eqv
 
     print(f"Saving statistics for {paths[0]}")
 
-    m1, s1 = compute_statistics_of_path(paths[0], model, batch_size,
+    m1, s1 = calculate_statistics_of_path(paths[0], model, batch_size,
                                         dims, img_size, device, num_workers, eqv=eqv)
 
     np.savez_compressed(paths[1], mu=m1, sigma=s1)

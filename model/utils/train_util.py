@@ -44,6 +44,7 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
+        sampling_interval=0,
         pred_type='pfode',
         use_fp16=False,
         fp16_scale_growth=1e-3,
@@ -69,6 +70,12 @@ class TrainLoop:
         self.log_interval = log_interval
         self.save_interval = save_interval
         self.resume_checkpoint = resume_checkpoint
+        if sampling_interval > 0:
+            if sampling_interval < save_interval:
+                logger.log("Sampling_interval < save_interval, setting sampling_interval=save_interval.")
+                self.sampling_interval = self.save_interval
+            else:
+                self.sampling_interval = sampling_interval
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
@@ -125,7 +132,24 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
+
+        if self.eqv_reg is not None:
+            self.target_model = copy.deepcopy(self.model)
+            if self.resume_step:
+                self._load_and_sync_target_parameters()
+
+            self.target_model.requires_grad_(False)
+            self.target_model.train()
+            # self.target_model_master_params = list(self.target_model.parameters())
+            self.target_model_param_groups_and_shapes = get_param_groups_and_shapes(
+                self.target_model.named_parameters()
+            )
+            self.target_model_master_params = make_master_params(
+                self.target_model_param_groups_and_shapes
+            )
+
         self.step = self.resume_step
+        self.resume_step = 0
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or find_resume_checkpoint_aux(self.resume_checkpoint)
@@ -223,6 +247,10 @@ class TrainLoop:
 
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
+
+            if hasattr(self, 'sampling_interval'):
+                if self.step % self.sampling_interval == 0:
+                    return self.step, self.ema_rate
 
         # Save the last checkpoint if it wasn't already saved.
         if not saved:

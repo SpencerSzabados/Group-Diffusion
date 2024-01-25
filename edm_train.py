@@ -44,7 +44,7 @@ def create_argparser():
         fp16_scale_growth=1e-3,
         user_id='dummy',
         slurm_id='-1',
-        data_augment=False,
+        data_augment=0,
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
