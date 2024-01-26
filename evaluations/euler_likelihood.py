@@ -348,6 +348,7 @@ class Karras_Score:
        return self.denoise_score(x, y, t[0])
     
     def ddim_score(self, x, y, t):
+        
         return None # TODO
 
 

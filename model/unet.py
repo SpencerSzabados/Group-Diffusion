@@ -70,7 +70,7 @@ class UNetModel(nn.Module):
         out_channels,
         num_res_blocks,
         attention_resolutions,
-        g_equiv=False, # TODO - verify this argument is changed based on launch options
+        g_equiv=False,
         g_input=None,
         g_output=None,
         dropout=0,

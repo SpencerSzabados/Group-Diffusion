@@ -32,7 +32,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 Example launch command:
-python fid_score.py --path "/home/datasets/fid_samples/" "/home/datasets/rot_mnist/" --batch_size 128 --device cuda:0 --img_size 28 --eqv C4
+python fid_score.py --path "/home/datasets/fid_samples_2/" "/home/datasets/c4_mnist_50000/" --batch_size 128 --device cuda:1 --img_size 28 --eqv C4
 """
 
 

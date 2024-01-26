@@ -31,8 +31,8 @@ def convert_npz_to_jpegs(npz_file, output_folder):
 
 def main():
     # Specify the path to your .npz file and the output folder
-    npz_file_path = '/home/sszabados/datasets/fid_samples/samples_48000x28x28x3.npz'
-    output_folder_path = '/home/sszabados/datasets/fid_samples/'
+    npz_file_path = '/home/datasets/fid_samples_2/samples_50000x28x28x3.npz'
+    output_folder_path = '/home/datasets/fid_samples_2/'
 
     # Call the function to perform the conversion
     convert_npz_to_jpegs(npz_file_path, output_folder_path)

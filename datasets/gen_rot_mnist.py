@@ -33,7 +33,7 @@ from torchvision import datasets
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/c4_mnist_6000/"
+data_dir = "/home/sszabados/datasets/c4_mnist_50000/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
@@ -188,7 +188,7 @@ def sample_rot_mnist_pdf(num_samples=10):
 def main():
     # gen_rot_mnist_jpg(samples=6000)
     # gen_rot_mnist_npy(samples=6000)
-    gen_rot_mnist_c4_jpg(samples=6000)
+    gen_rot_mnist_c4_jpg(samples=50000)
 
 
 if __name__ == '__main__':

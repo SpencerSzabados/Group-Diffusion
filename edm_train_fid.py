@@ -29,15 +29,13 @@ from evaluations.fid_score import calculate_fid_given_paths
 def create_argparser():
     defaults = dict(
         data_dir="",
+        ref_dir="",
         sampling_dir="",
         g_equiv=False,
         g_input=None,
         g_output=None,
+        channel_mult="",
         diff_type='pfode',
-        sampler='euler',
-        pred_type='x',
-        eqv_reg=None,
-        schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
@@ -48,6 +46,7 @@ def create_argparser():
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
+        num_samples=50000,
         sampling_interval=0,
         resume_checkpoint="",
         use_fp16=False,
@@ -55,16 +54,31 @@ def create_argparser():
         user_id='dummy',
         slurm_id='-1',
         data_augment=0,
+        generator="determ",
+        sampler='euler',
+        pred_type='x',
+        eqv_reg=None,
+        schedule_sampler="uniform",
+        clip_denoised=True,
+        s_churn=0.0,
+        s_tmin=0.0,
+        s_tmax=float("inf"),
+        s_noise=1.0,
+        steps=40,
+        model_path="",
+        seed=42,
+        ts="",
+        save_as="npy"
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     return parser
 
-def calculate_fid(diffusion, model, args, **kwargs):
+def calculate_fid(diffusion, model, args, step):
     logger.log("Called calculate_fid.")
     logger.log("Sampling images...")
-    Path(args.dir2gen).mkdir(parents=True, exist_ok=True)
+    Path(args.sampling_dir).mkdir(parents=True, exist_ok=True)
     if args.sampler == "multistep":
         assert len(args.ts) > 0
         ts = tuple(int(x) for x in args.ts.split(","))
@@ -75,11 +89,15 @@ def calculate_fid(diffusion, model, args, **kwargs):
     all_labels = []
     generator = get_generator(args.generator, args.num_samples, args.seed)
 
+    # TODO: Determine a better way to set this parameter
+    if args.batch_size < 0:
+        args.batch_size = args.global_batch_size
+
     while len(all_images) * args.batch_size < args.num_samples:
         model_kwargs = {}
         if args.class_cond:
             classes = th.randint(
-                low=0, high=NUM_CLASSES, size=(args.batch_size,), device=distribute_util.dev()
+                low=0, high=10, size=(args.batch_size,), device=distribute_util.dev()
             )
             model_kwargs["y"] = classes
 
@@ -122,23 +140,20 @@ def calculate_fid(diffusion, model, args, **kwargs):
     if args.class_cond:
         label_arr = np.concatenate(all_labels, axis=0)
         label_arr = label_arr[: args.num_samples]
-    if dist.get_rank() == 0:
-        shape_str = "x".join([str(x) for x in arr.shape])
-        out_path = os.path.join(args.dir2gen, f"samples_{shape_str}.npz")
-        logger.log(f"saving to {out_path}")
-        if args.class_cond:
-            np.savez(out_path, arr, label_arr)
-        else:
-            np.savez(out_path, arr)
-
-    dist.barrier()
-    logger.log("sampling complete")
+    shape_str = "x".join([str(x) for x in arr.shape])
+    out_path = os.path.join(args.sampling_dir, f"samples_{shape_str}.npz")
+    logger.log(f"saving to {out_path}")
+    if args.class_cond:
+        np.savez(out_path, arr, label_arr)
+    else:
+        np.savez(out_path, arr)
+    logger.log("sampling complete.")
 
     logger.log("extracting images...")
-    filename = Path(args.dir2gen).stem
-    dir2img = f"{logger.get_dir()}/{filename}_imgs"
+    filename = Path(args.sampling_dir).stem # TODO: The filename and dir2img create a directoy in the wrong location currently. 
+    dir2img = f"{filename}/images"
     Path(dir2img).mkdir(parents=True, exist_ok=True)
-    imgs = dict(np.load(args.dir2gen))['arr_0']
+    imgs = dict(np.load(out_path))['arr_0']
     num_img = len(imgs)
     for i in range(num_img):
         im = Image.fromarray(np.squeeze(imgs[i]))
@@ -149,16 +164,17 @@ def calculate_fid(diffusion, model, args, **kwargs):
     fid_value = 0
     try:
         fid_value = calculate_fid_given_paths(
-            paths=[kwargs.dir2ref, dir2img],
+            paths=[args.ref_dir, dir2img],
             batch_size=args.batch_size,
             device='cuda',
             dims=2048,
+            img_size=args.image_size,
             num_workers=dist.get_world_size(),
-            eqv=args.eqv
+            eqv=args.g_output.split('_')[0]
         )
     except ValueError:
         fid_value = np.inf
-    print(f"Steps: {kwargs.steps}, FID: {fid_value}")
+    logger.log(f"Steps: {step}, FID: {fid_value}")
     return fid_value
 
 def main():
@@ -227,7 +243,7 @@ def main():
         if args.sampling_interval > 0:
             step, ema_rate = trainloop.run_loop()
             # Compute fid of model 
-            calculate_fid(diffusion, model, args, step=step, dir2ref=args.data_dir, dir2gen=args.sampling_dir)
+            calculate_fid(diffusion, model, args, step=step)
         else:
             trainloop.run_loop()
 
