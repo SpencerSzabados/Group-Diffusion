@@ -86,7 +86,7 @@ def create_model_and_diffusion(
     sigma_min=0.002,
     sigma_max=80.0,
     distillation=False,
-    data_augment=False,
+    data_augment=0,
     aug_pip_arg=None,
 ):
     model = create_model(
@@ -147,7 +147,7 @@ def create_model(
     resblock_updown=False,
     use_fp16=False,
     use_new_attention_order=False,
-    data_augment=False,
+    data_augment=0,
 ):
     if channel_mult == "":
         if image_size == 512:

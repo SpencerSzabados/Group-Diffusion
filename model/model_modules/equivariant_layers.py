@@ -524,7 +524,8 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
         elif dims == 3:
             return nn.Conv3d(*args, **kwargs)
         raise ValueError(f"unsupported dimensions in gconv_ng: {dims}")
-    raise ValueError(f"unsupported group equivariance boolean value in gconv_ng: {g_equiv}")
+    else:
+        raise ValueError(f"unsupported group equivariance boolean value in gconv_ng: {g_equiv}")
 
 
 ### ---[ Pooling layers ]------------------------

@@ -33,7 +33,7 @@ from torchvision import datasets
 # the until function "image_dataset_loader.py" which assumes images
 # are named in the form "label_index.datatype".
 
-data_dir = "/home/sszabados/datasets/c4_mnist_50000/"
+data_dir = "/home/sszabados/datasets/c4_mnist/"
 raw_dir = data_dir+"data"
 processed_dir = data_dir
 resource_link = [("http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
@@ -52,7 +52,7 @@ def gen_rot_mnist_c4_jpg(samples=600):
         image, target = mnist_dataset[i]
         # Select random rotation angle
         k = th.randint(low=0, high=4, size=(1,), dtype=int)
-        image = image.rotate(k, expand=False)
+        image = image.rotate(90*k, expand=False)
         image.save(os.path.join(data_dir, f"{target}_{i}.JPEG"))
         
 
@@ -188,7 +188,8 @@ def sample_rot_mnist_pdf(num_samples=10):
 def main():
     # gen_rot_mnist_jpg(samples=6000)
     # gen_rot_mnist_npy(samples=6000)
-    gen_rot_mnist_c4_jpg(samples=50000)
+    gen_rot_mnist_c4_jpg(samples=60000)
+    # sample_rot_mnist_pdf(num_samples=3)
 
 
 if __name__ == '__main__':

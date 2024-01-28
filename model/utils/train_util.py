@@ -53,7 +53,7 @@ class TrainLoop:
         lr_anneal_steps=0,
         start_ema=None,
         eqv_reg=None,
-        data_augment=False,
+        data_augment=0,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -197,6 +197,7 @@ class TrainLoop:
             raise FileNotFoundError(f"Cannot find checkpoint file at {opt_checkpoint}")
 
     def run_loop(self):
+        self.model.train()
         saved = False
         while (
             not self.lr_anneal_steps
@@ -250,6 +251,7 @@ class TrainLoop:
 
             if hasattr(self, 'sampling_interval'):
                 if self.step % self.sampling_interval == 0:
+                    self.model.eval()
                     return self.step, self.ema_rate
 
         # Save the last checkpoint if it wasn't already saved.

@@ -495,9 +495,9 @@ def karras_sample(
 def get_sigmas_karras(n, sigma_min, sigma_max, rho=7.0, device="cpu"):
     """Constructs the noise schedule of Karras et al. (2022)."""
     ramp = th.linspace(0, 1, n)
-    min_inv_rho = sigma_min ** (1 / rho)
-    max_inv_rho = sigma_max ** (1 / rho)
-    sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
+    min_inv_rho = sigma_min**(1/rho)
+    max_inv_rho = sigma_max**(1/rho)
+    sigmas = (max_inv_rho + ramp*(min_inv_rho - max_inv_rho))**rho
     return append_zero(sigmas).to(device)
 
 

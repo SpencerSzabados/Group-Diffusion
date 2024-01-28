@@ -76,105 +76,108 @@ def create_argparser():
     return parser
 
 def calculate_fid(diffusion, model, args, step):
-    logger.log("Called calculate_fid.")
-    logger.log("Sampling images...")
-    Path(args.sampling_dir).mkdir(parents=True, exist_ok=True)
-    if args.sampler == "multistep":
-        assert len(args.ts) > 0
-        ts = tuple(int(x) for x in args.ts.split(","))
-    else:
-        ts = None
+    with th.no_grad():
+        model.eval()
+        logger.log("Called calculate_fid.")
+        logger.log("Sampling images...")
+        Path(args.sampling_dir).mkdir(parents=True, exist_ok=True)
+        if args.sampler == "multistep":
+            assert len(args.ts) > 0
+            ts = tuple(int(x) for x in args.ts.split(","))
+        else:
+            ts = None
 
-    all_images = []
-    all_labels = []
-    generator = get_generator(args.generator, args.num_samples, args.seed)
+        all_images = []
+        all_labels = []
+        generator = get_generator(args.generator, args.num_samples, args.seed)
 
-    # TODO: Determine a better way to set this parameter
-    if args.batch_size < 0:
-        args.batch_size = args.global_batch_size
+        # TODO: Determine a better way to set this parameter
+        if args.batch_size < 0:
+            args.batch_size = args.global_batch_size
 
-    while len(all_images) * args.batch_size < args.num_samples:
-        model_kwargs = {}
-        if args.class_cond:
-            classes = th.randint(
-                low=0, high=10, size=(args.batch_size,), device=distribute_util.dev()
+        while len(all_images) * args.batch_size < args.num_samples:
+            model_kwargs = {}
+            if args.class_cond:
+                classes = th.randint(
+                    low=0, high=10, size=(args.batch_size,), device=distribute_util.dev()
+                )
+                model_kwargs["y"] = classes
+
+            sample = karras_sample(
+                diffusion,
+                model,
+                (args.batch_size, 3, args.image_size, args.image_size),
+                steps=args.steps,
+                model_kwargs=model_kwargs,
+                device=distribute_util.dev(),
+                clip_denoised=args.clip_denoised,
+                sampler=args.sampler,
+                pred_type=args.pred_type,
+                sigma_min=args.sigma_min,
+                sigma_max=args.sigma_max,
+                s_churn=args.s_churn,
+                s_tmin=args.s_tmin,
+                s_tmax=args.s_tmax,
+                s_noise=args.s_noise,
+                generator=generator,
+                ts=ts,
             )
-            model_kwargs["y"] = classes
+            sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
+            sample = sample.permute(0, 2, 3, 1)
+            sample = sample.contiguous()
 
-        sample = karras_sample(
-            diffusion,
-            model,
-            (args.batch_size, 3, args.image_size, args.image_size),
-            steps=args.steps,
-            model_kwargs=model_kwargs,
-            device=distribute_util.dev(),
-            clip_denoised=args.clip_denoised,
-            sampler=args.sampler,
-            pred_type=args.pred_type,
-            sigma_min=args.sigma_min,
-            sigma_max=args.sigma_max,
-            s_churn=args.s_churn,
-            s_tmin=args.s_tmin,
-            s_tmax=args.s_tmax,
-            s_noise=args.s_noise,
-            generator=generator,
-            ts=ts,
-        )
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        sample = sample.permute(0, 2, 3, 1)
-        sample = sample.contiguous()
+            gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
+            dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
+            all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
+            if args.class_cond:
+                gathered_labels = [
+                    th.zeros_like(classes) for _ in range(dist.get_world_size())
+                ]
+                dist.all_gather(gathered_labels, classes)
+                all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
+            logger.log(f"created {len(all_images) * args.batch_size} samples")
 
-        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
-        all_images.extend([sample.cpu().numpy() for sample in gathered_samples])
+        arr = np.concatenate(all_images, axis=0)
+        arr = arr[: args.num_samples]
         if args.class_cond:
-            gathered_labels = [
-                th.zeros_like(classes) for _ in range(dist.get_world_size())
-            ]
-            dist.all_gather(gathered_labels, classes)
-            all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
-        logger.log(f"created {len(all_images) * args.batch_size} samples")
+            label_arr = np.concatenate(all_labels, axis=0)
+            label_arr = label_arr[: args.num_samples]
+        shape_str = "x".join([str(x) for x in arr.shape])
+        out_path = os.path.join(args.sampling_dir, f"samples_{shape_str}.npz")
+        logger.log(f"saving to {out_path}")
+        if args.class_cond:
+            np.savez(out_path, arr, label_arr)
+        else:
+            np.savez(out_path, arr)
+        logger.log("sampling complete.")
 
-    arr = np.concatenate(all_images, axis=0)
-    arr = arr[: args.num_samples]
-    if args.class_cond:
-        label_arr = np.concatenate(all_labels, axis=0)
-        label_arr = label_arr[: args.num_samples]
-    shape_str = "x".join([str(x) for x in arr.shape])
-    out_path = os.path.join(args.sampling_dir, f"samples_{shape_str}.npz")
-    logger.log(f"saving to {out_path}")
-    if args.class_cond:
-        np.savez(out_path, arr, label_arr)
-    else:
-        np.savez(out_path, arr)
-    logger.log("sampling complete.")
+        logger.log("extracting images...")
+        filename = Path(args.sampling_dir).stem # TODO: The filename and dir2img create a directoy in the wrong location currently. 
+        dir2img = f"{filename}/images"
+        Path(dir2img).mkdir(parents=True, exist_ok=True)
+        imgs = dict(np.load(out_path))['arr_0']
+        num_img = len(imgs)
+        for i in range(num_img):
+            im = Image.fromarray(np.squeeze(imgs[i]))
+            im.save(os.path.join(dir2img, f'{i}.JPEG'))
+        logger.info(f'Image extraction completed (Total: {num_img})')
 
-    logger.log("extracting images...")
-    filename = Path(args.sampling_dir).stem # TODO: The filename and dir2img create a directoy in the wrong location currently. 
-    dir2img = f"{filename}/images"
-    Path(dir2img).mkdir(parents=True, exist_ok=True)
-    imgs = dict(np.load(out_path))['arr_0']
-    num_img = len(imgs)
-    for i in range(num_img):
-        im = Image.fromarray(np.squeeze(imgs[i]))
-        im.save(os.path.join(dir2img, f'{i}.JPEG'))
-    logger.info(f'Image extraction completed (Total: {num_img})')
-
-    logger.log("Computing current fid...")
-    fid_value = 0
-    try:
-        fid_value = calculate_fid_given_paths(
-            paths=[args.ref_dir, dir2img],
-            batch_size=args.batch_size,
-            device='cuda',
-            dims=2048,
-            img_size=args.image_size,
-            num_workers=dist.get_world_size(),
-            eqv=args.g_output.split('_')[0]
-        )
-    except ValueError:
-        fid_value = np.inf
-    logger.log(f"Steps: {step}, FID: {fid_value}")
+        logger.log("Computing current fid...")
+        fid_value = 0
+        try:
+            fid_value = calculate_fid_given_paths(
+                paths=[args.ref_dir, dir2img],
+                batch_size=args.batch_size,
+                device='cuda',
+                dims=2048,
+                img_size=args.image_size,
+                num_workers=dist.get_world_size(),
+                eqv=args.g_output.split('_')[0]
+            )
+        except ValueError:
+            fid_value = np.inf
+        logger.log(f"Steps: {step}, FID: {fid_value}")
+        
     return fid_value
 
 def main():
