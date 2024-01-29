@@ -14,6 +14,8 @@
     OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv False --g_input Z2_K --g_output Z2_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 100 --batch_size 100 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/c4toy_example_non_eqv/model016000.pt --data_dir /home/datasets/c4_toy --num_samples 1 --steps 1000 --repeats 2 --sde VESDE 
     OPENAI_LOGDIR=/home/checkpoints/temp/ python image_euler_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --attention_resolutions 32,16,8 --class_cond False --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 100 --batch_size 100 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 500 --model_path /home/checkpoints/Group-Diffusion/c4toy_example/model014000.pt --data_dir /home/datasets/c4_toy_rot270 --num_samples 1 --steps 1000 --repeats 2 --sde VESDE 
 
+    CUDA_VISIBLE_DEVICES=0 OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/temp/ python image_euler_likelihood.py --g_equiv True --g_input Z2_K --g_output C4_K --diff_type ddim --sampler ddim --data_augment 0 --eqv_reg None --pred_type x --attention_resolutions 32,16,8 --class_cond True --channel_mult 1,2,4 --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 128 --batch_size 128 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 2 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 1000 --sampling_interval 1000 --model_path /home/checkpoints/Group-Diffusion/c4_mnist_3000_eqv_ddim_ch124_r2/model020000.pt --data_dir /home/datasets/c4_mnist_6000 --num_samples 1 --steps 100 --repeats 1 --sde VPSDE
+
 """
 
 import io
@@ -49,6 +51,9 @@ def create_argparser():
         g_equiv=False,
         g_input=None,
         g_output=None,
+        eqv_reg=None,
+        pred_type='x',
+        sampler="multistep",
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
@@ -62,6 +67,7 @@ def create_argparser():
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
+        sampling_interval=10000,
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
@@ -109,11 +115,12 @@ def main():
     # Default parameter values 
     sigma_max = args.sigma_max or 80.0
     sigma_min = args.sigma_min or 0.002
+    sampler = args.sampler
     steps = args.steps or 100
     bpd_num_repeats = args.repeats or 1 # Average over the dataset this many times when computing likelihood 
 
     if args.sde == "VPSDE":
-        sde = euler_likelihood.VPSDE()
+        sde = euler_likelihood.VPSDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
     elif args.sde == "VESDE":
         sde = euler_likelihood.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
     else:
@@ -159,11 +166,13 @@ def main():
         batch, cond = next(data)
         cond = cond if args.class_cond else None
         batch = batch.to('cuda:0').float()
+
         bpd, z, nfe = likelihood_fn(model, batch, cond)
         bpd = bpd.detach().cpu().numpy().reshape(-1)
-        bpds.extend(bpd)
 
+        bpds.extend(bpd)
         nfes.append(nfe)
+        
         means.append(np.mean(bpd))
         vars.append(np.var(bpd))
 

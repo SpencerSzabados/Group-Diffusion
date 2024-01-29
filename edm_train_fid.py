@@ -1,7 +1,7 @@
 """
     Script for training a diffusion model on image data using EDM (https://github.com/NVlabs/edm)
     methodology. This script is modified to pause training after a selected number of steps and 
-    compute the current fid score, then resume training.
+    compute the current fid score then resume training. 
 """
 
 import os

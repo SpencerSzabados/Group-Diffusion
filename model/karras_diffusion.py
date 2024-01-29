@@ -749,8 +749,8 @@ def sample_ddim(
     s_in = x.new_ones([x.shape[0]])
     time_pairs = sigmas
     aug_data = dict()
-
     aug_data_ = dict()
+    
     for k in aug_data:
         print(k)
         aug_data_[k] = para_aug(aug_data[k])

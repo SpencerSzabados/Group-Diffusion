@@ -111,10 +111,10 @@ class SDE(abc.ABC):
                 diffusion = 0. if self.probability_flow else diffusion
                 return drift, diffusion
 
-            def discretize(self, x, t):
+            def discretize(self, x, y, t):
                 """Create discretized iteration rules for the reverse diffusion sampler."""
                 f, G = discretize_fn(x, t)
-                rev_f = f - G[:, None, None, None] ** 2 * score_fn(x, t) * (0.5 if self.probability_flow else 1.)
+                rev_f = f - G[:, None, None, None]**2*score_fn(x, y, t)*(0.5 if self.probability_flow else 1.)
                 rev_G = th.zeros_like(G) if self.probability_flow else G
                 return rev_f, rev_G
         
@@ -122,33 +122,40 @@ class SDE(abc.ABC):
     
 
 class VPSDE(SDE):
-  def __init__(self, sigma_min=0.1, sigma_max=20, N=1000):
-    """Construct a Variance Preserving SDE.
+    def __init__(self, sigma_min=0.1, sigma_max=20, N=1000):
+        """Construct a Variance Preserving SDE.
 
-    Default values are configured for DDIM sde paramters.
+        Default values are configured for DDIM sde paramters.
 
-    Args:
-      beta_min: value of beta(0)
-      beta_max: value of beta(1)
-      N: number of discretization steps
-    """
-    super().__init__(N)
-    self.sigma_min = sigma_min
-    self.sigma_max = sigma_max
-    self.discrete_sigmas = get_sigmas_ddim(N)
-    self.N = N
+        Args:
+            beta_min: value of beta(0)
+            beta_max: value of beta(1)
+            N: number of discretization steps
+        """
+        super().__init__(N)
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.discrete_sigmas = self.get_sigmas_ddim(N)
+        self.N = N
 
-    def get_sigmas_ddim(steps, ns=0.0002, ds=0.00025):
+    def get_sigmas_ddim(self, steps, ns=0.0002, ds=0.00025):
         dt = 1 / steps
         times = th.linspace(1., 0., steps + 1)
         times = th.stack((times[:-1], (times[1:] - dt).clamp_(min=0)), dim = 0)
         times = times.unbind(dim = -1)
-        sigmas = (th.cos((times+ns)/(1+ds)*th.pi/2))**2
-        return sigmas
+        return times
+    
+    def gamma(self, t, ns=0.0002, ds=0.00025):
+        """Given time t [0,1] compute DDIM sigma time parameterization values."""
+        return  (th.cos((t+ns)/(1+ds)*th.pi/2))**2
 
     @property
     def T(self):
         return 1
+    
+    @property
+    def type(self):
+        return 'VPSDE'
 
     def sde(self, x, t):
         beta_t = self.beta_min + t * (self.beta_max - self.beta_min)
@@ -167,17 +174,23 @@ class VPSDE(SDE):
 
     def prior_logp(self, z):
         shape = z.shape
-        N = np.prod(shape[1:])
-        logps = -N / 2. * np.log(2 * np.pi) - th.sum(z ** 2, dim=(1, 2, 3)) / 2.
-        return logps
+        d = np.prod(shape[1:])
+        # logp = -d/2.*np.log(2*np.pi) - th.sum(z**2, dim=(1, 2, 3))/2.
+        gamma = self.gamma(self.discrete_sigmas[-1][0])
+        logp = d/2.*np.log(2.*np.pi*gamma**2) - th.sum(z**2, dim=(1, 2, 3))/(2*gamma**2) 
+        return logp
 
     def discretize(self, x, t):
-        """DDPM discretization."""
-        timestep = (t * (self.N - 1) / self.T).long()
-        beta = self.discrete_betas.to(x.device)[timestep]
+        """DDIM discretization."""
+        s_in = x.new_ones([x.shape[0]])
 
-        f = th.sqrt(alpha)[:, None, None, None] * x - x
-        G = th.sqrt(beta)
+        times = self.discrete_sigmas[t]
+        alpha = s_in*self.gamma(times[0]).to(x.device)
+        alpha_next = self.gamma(times[1])
+        
+
+        f = th.sqrt(alpha)[:, None, None, None]*x - x
+        G = th.sqrt(1-alpha)
         return f, G
 
 
@@ -199,6 +212,10 @@ class VESDE(SDE):
     @property
     def T(self):
         return 1
+    
+    @property
+    def type(self):
+        return 'VESDE'
 
     def sde(self, x, t):
         sigma = self.sigma_min*(self.sigma_max/self.sigma_min)**t
@@ -218,7 +235,8 @@ class VESDE(SDE):
     def prior_logp(self, z):
         shape = z.shape
         d = np.prod(shape[1:])
-        return -d/2.*np.log(2.*np.pi*self.sigma_max**2) - th.sum(z**2, dim=(1, 2, 3))/(2*self.sigma_max**2) 
+        logp = -d/2.*np.log(2.*np.pi*self.sigma_max**2) - th.sum(z**2, dim=(1, 2, 3))/(2*self.sigma_max**2) 
+        return logp
 
     def discretize(self, x, t):
         """SMLD(NCSN) discretization."""
@@ -239,6 +257,7 @@ class Karras_Score:
         self,
         model=None,
         model_kwargs=None,
+        sampler='euler',
         sde=None,
         sigma_data: float = 0.5,
         sigma_max=80.0,
@@ -256,6 +275,8 @@ class Karras_Score:
         assert(model != None)
         self.model.eval()
         self.device = device
+
+        self.sampler = sampler
 
         self.sde = sde 
         assert(sde != None)
@@ -286,16 +307,6 @@ class Karras_Score:
     
     def append_zero(self, x):
         return th.cat([x, x.new_zeros([1])])
-    
-    def get_sigmas_karras(self, n):
-        """Constructs the noise schedule of Karras et al. (2022)."""
-        ramp = th.linspace(0, 1, n)
-        sigmas = (self.max_inv_rho + ramp * (self.min_inv_rho - self.max_inv_rho)) ** self.rho
-        return self.append_zero(sigmas).to(self.device)
-    
-    def calculate_sigma_karras(self, t):
-        sigma = (self.max_inv_rho + t*(self.min_inv_rho-self.max_inv_rho))**self.rho
-        return sigma
 
     def get_scalings(self, sigma):
         """Calculates EDM SDE/ODE C_skip,C_in,C_out paramters at time sigma."""
@@ -306,7 +317,7 @@ class Karras_Score:
 
     def to_d(self, x, sigma, denoised):
         """Converts a denoiser output to a Karras ODE derivative."""
-        return (x - denoised) / self.append_dims(sigma, x.ndim)
+        return (x-denoised)/self.append_dims(sigma, x.ndim)
 
     def denoise(self, x_t, y, sigmas):
         """Denoises x_t given time steps sigmas."""
@@ -327,29 +338,60 @@ class Karras_Score:
            to perform euler update step.
         """
         s_in = x.new_ones([x.shape[0]])
-        _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
-        # denoised = denoised.clamp(-1, 1)
 
-        d = self.to_d(x, self.sigmas[t]*s_in, denoised)
-        dt = self.sigmas[t] - (0 if t - 1 < 0 else self.sigmas[t-1])
+        if self.sde.type == 'VPSDE':
+            t_now = self.sigmas[t][0]
+            t_next = self.sigmas[t][1]
+            gamma_now = self.sde.gamma(t_now)   # TODO: The gammas might be wrong. gamma_next is for the current step still I should use gamma(t+1)
+            gamma_next = self.sde.gamma(t_next)
+            _, denoised = self.denoise(x, y, t_now*s_in)
 
-        x_t = x + d*dt
+            normalizer = th.sqrt((1.-gamma_next)/gamma_next)-th.sqrt((1.-gamma_now)/gamma_now)
+
+            d = self.to_d(x/th.sqrt(gamma_next), normalizer*s_in, denoised/th.sqrt(gamma_now))
+            dt = gamma_now-gamma_next
+
+            x_t = th.sqrt(gamma_next)*x + th.sqrt(1-gamma_next)*d*dt
+
+        else:
+            _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
+            d = self.to_d(x, self.sigmas[t]*s_in, denoised)
+            dt = self.sigmas[t] - (0 if t-1 < 0 else self.sigmas[t-1])
+
+            x_t = x + d*dt
 
         return x, x_t, dt
 
-    def denoise_score(self, x_t, y, t):
+    def pfode_score(self, x_t, y, t):
         """Computes the denoising score (gradient of logp) of x_t at time sigma[t]."""
         s_in = x_t.new_ones([x_t.shape[0]])
         _, denoised = self.denoise(x_t, y, self.sigmas[t]*s_in)
         d = self.to_d(x_t, self.sigmas[t]*s_in, denoised)
         return d
-
-    def pfode_score(self, x, y, t):
-       return self.denoise_score(x, y, t[0])
     
-    def ddim_score(self, x, y, t):
-        
-        return None # TODO
+    def ddim_score(self, x_t, y, t):
+        """Computes the denoising score of ddim given x_t in time window sigma[t]."""
+        s_in = x_t.new_ones([x_t.shape[0]])
+        t_now = self.sigmas[t][0]
+        t_next = self.sigmas[t][1]
+        gamma_now = self.sde.gamma(t_now)
+        gamma_next = self.sde.gamma(t_next)
+
+        _, denoised = self.denoise(x_t, y, t_now*s_in)
+
+        pred_noise = (x_t-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
+        x = th.sqrt(gamma_next)*denoised+th.sqrt(1-gamma_next)*pred_noise
+
+        normalizer = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
+
+        d = self.to_d(x_t, normalizer*s_in, denoised)
+        return d
+
+    def get_score(self, x, y, t):
+        if self.sde.type == 'VPSDE':
+            return self.ddim_score(x, y, t)
+        else:
+            return self.pfode_score(x, y, t)
 
 
 def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
@@ -405,7 +447,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             """
 
             def score_fn(x, y, t):
-                score = score_cl.pfode_score(x, y, t)
+                score = score_cl.get_score(x, y, t)
                 return score
             
             return score_fn
@@ -413,9 +455,9 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
         def drift_fn(score_cl, x, y, t):
             """The drift function of the reverse-time SDE."""
             score_fn = get_score_fn(score_cl) # Default: continuous=True
-            # rsde = score_cl.sde.reverse(score_fn, probability_flow=True) # Probability flow ODE is a special case of Reverse SDE
-            # return rsde.discretize(x,t)[0]
-            return score_fn(x, y, t)
+            rsde = score_cl.sde.reverse(score_fn, probability_flow=True) # Probability flow ODE is a special case of Reverse SDE
+            return rsde.discretize(x, y, t)[0]
+            # return score_fn(x, y, t)
 
         def div_fn(score_cl, x, y, t, epsilon):
             with th.enable_grad():
@@ -426,9 +468,8 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             return th.sum(grad_fn_eps*epsilon, dim=tuple(range(1, len(x.shape))))
         
         def ode_func(x,y,t):
-            vec_t = th.ones(x.shape[0], device=x.device, dtype=int)*t
-            drift = drift_fn(score_cl, x, y, vec_t)
-            logp_grad = div_fn(score_cl, x, y, vec_t, epsilon)
+            drift = drift_fn(score_cl, x, y, t)
+            logp_grad = div_fn(score_cl, x, y, t, epsilon)
             return (drift, logp_grad)
     
         with th.no_grad():
@@ -441,10 +482,11 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             # Run euler steps
             for t in tqdm(range(0,int(score_cl.steps))): 
                 _, x_t, dt = score_cl.euler_step(x_t, y, t)
+                # _, _, dt = score_cl.euler_step(x_t, y, t)
                 
-                ## DEBUG
-                # grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
-                # torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
+                # DEBUG
+                grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
+                torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
                 
                 drift, logp_grad = ode_func(x_t, y, t) 
                 
