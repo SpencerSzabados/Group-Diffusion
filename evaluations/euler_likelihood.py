@@ -342,31 +342,35 @@ class Karras_Score:
         s_in = x.new_ones([x.shape[0]])
 
         if self.sde.type == 'VPSDE':
+            t = 0 if t-1<0 else t
             t_now = self.sigmas[t][0]
             t_next = self.sigmas[t][1]
             gamma_now = self.sde.gamma(t_now)   
             gamma_next = self.sde.gamma(t_next)
+            if t+1<len(self.sigmas):
+                t_now_ = self.sigmas[t+1][0]
+                t_next_ = self.sigmas[t+1][1]
+                gamma_now_ = self.sde.gamma(t_now_)   
+                gamma_next_ = self.sde.gamma(t_next_)
+            else:
+                gamma_now_ = gamma_now
+                gamma_next_ = gamma_next
             
             _, denoised = self.denoise(x, y, t_now*s_in)
             denoised = denoised.clamp(-1,1)
             pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
 
-            # d = self.to_d(x_t/th.sqrt(gamma_next), normalizer*s_in, denoised/th.sqrt(gamma_now))
             normalizer = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
-            d = self.to_d(x/th.sqrt(1+gamma_now), normalizer*s_in, denoised/th.sqrt(1+gamma_next))
-            # dt = th.sqrt((1.-gamma_next)/gamma_next)-th.sqrt((1.-gamma_now)/gamma_now)
-
-            dt = 0.5*((1.-gamma_next)/gamma_next-(1.-gamma_now)/gamma_now)*th.sqrt(gamma_now/(1.-gamma_now))
-            # dt = t_now-t_next
+            d = self.to_d(x/th.sqrt(gamma_now), normalizer*s_in, denoised/th.sqrt(gamma_next))
+            dt = th.sqrt((1-gamma_next_)/gamma_next_)-th.sqrt((1-gamma_now_)/gamma_now_)
+            # dt = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
 
             print(str(t_now)+", "+str(t_next))
             print(str(gamma_now)+", "+str(gamma_next))
             print(dt)
             print(d*dt)
 
-            x_t = th.sqrt(gamma_now)*(x/th.sqrt(gamma_next) - d*dt)
-            # x_t1 = x_t + self.sde.f(t_next)*(x_t+d)*dt
-            # x_t1 = self.sde.f(t_now)*x_t*dt + th.sqrt(-self.sde.f(t_now))*pred_noise
+            x_t = th.sqrt(gamma_now_)*(x/th.sqrt(gamma_next_) + d*dt)
 
         else:
             _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
