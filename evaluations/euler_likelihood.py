@@ -342,11 +342,19 @@ class Karras_Score:
         s_in = x.new_ones([x.shape[0]])
 
         if self.sde.type == 'VPSDE':
-            t = self.steps-t-1
+            
             t_now = self.sigmas[t][0]
             t_next = self.sigmas[t][1]
             gamma_now = self.sde.gamma(t_now)   
             gamma_next = self.sde.gamma(t_next)
+            if t+1<len(self.sigmas):
+                t_now_ = self.sigmas[t+1][0]
+                t_next_ = self.sigmas[t+1][1]
+                gamma_now_ = self.sde.gamma(t_now_)   
+                gamma_next_ = self.sde.gamma(t_next_)
+            else:
+                gamma_now_ = self.sde.gamma(t_now)   
+                gamma_next_ = self.sde.gamma(t_next)
 
             x_vp = th.sqrt(gamma_next)*x
          
