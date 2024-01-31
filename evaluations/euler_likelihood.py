@@ -138,7 +138,7 @@ class VPSDE(SDE):
         self.discrete_sigmas = self.get_sigmas_ddim(N)
         self.N = N
 
-    def get_sigmas_ddim(self, steps, ns=0.0002, ds=0.00025):
+    def get_sigmas_ddim(self, steps):
         dt = 1 / steps
         times = th.linspace(1., 0., steps+1)
         times = th.stack((times[:-1], (times[1:] - dt).clamp_(min=0)), dim = 0)
@@ -342,35 +342,34 @@ class Karras_Score:
         s_in = x.new_ones([x.shape[0]])
 
         if self.sde.type == 'VPSDE':
-            t = 0 if t-1<0 else t
+            t = self.steps-t-1
             t_now = self.sigmas[t][0]
             t_next = self.sigmas[t][1]
             gamma_now = self.sde.gamma(t_now)   
             gamma_next = self.sde.gamma(t_next)
-            if t+1<len(self.sigmas):
-                t_now_ = self.sigmas[t+1][0]
-                t_next_ = self.sigmas[t+1][1]
-                gamma_now_ = self.sde.gamma(t_now_)   
-                gamma_next_ = self.sde.gamma(t_next_)
-            else:
-                gamma_now_ = gamma_now
-                gamma_next_ = gamma_next
-            
-            _, denoised = self.denoise(x, y, t_now*s_in)
+
+            x_vp = th.sqrt(gamma_next)*x
+         
+            _, denoised = self.denoise(x_vp, y, t_next*s_in)
             denoised = denoised.clamp(-1,1)
-            pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
+            pred_noise = (x_vp-th.sqrt(gamma_next)*denoised)/th.sqrt(1-gamma_next)
 
             normalizer = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
-            d = self.to_d(x/th.sqrt(gamma_now), normalizer*s_in, denoised/th.sqrt(gamma_next))
-            dt = th.sqrt((1-gamma_next_)/gamma_next_)-th.sqrt((1-gamma_now_)/gamma_now_)
+            # d = self.to_d(th.sqrt(gamma_now)*x, t_now*s_in, denoised)
+            # dt = th.sqrt((1-gamma_next_)/gamma_next_)-th.sqrt((1-gamma_now_)/gamma_now_)
             # dt = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
+            dt = 0.5*((1-gamma_next)/gamma_next-(1-gamma_now)/gamma_now)*th.sqrt(gamma_now/(1-gamma_now))
+            print((1-gamma_next)/gamma_next)
+            print((1-gamma_now)/gamma_now)
+            print(th.sqrt(gamma_now/(1-gamma_now)))
 
             print(str(t_now)+", "+str(t_next))
             print(str(gamma_now)+", "+str(gamma_next))
             print(dt)
-            print(d*dt)
+            print("sd: "+str(th.sqrt((1-gamma_next)/gamma_next)))
+            # print(d*dt)
 
-            x_t = th.sqrt(gamma_now_)*(x/th.sqrt(gamma_next_) + d*dt)
+            x_t = x - th.sqrt(gamma_now)*(pred_noise*dt)
 
         else:
             _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
@@ -493,8 +492,12 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             return (drift, logp_grad)
     
         with th.no_grad():
-            x_t = data+th.randn_like(data)*score_cl.sigma_min # Need to add noise to data as T='inf'
+            gamma = score_cl.sde.gamma(score_cl.sigmas[-1])[1]
+            sd = th.sqrt((1-gamma)/gamma)
+            x_t = data+th.randn_like(data)*sd # Need to add noise to data as T='inf'
             print("x shape: "+str(x_t.shape))
+            print("sd:" +str(sd))
+            
             # print("noise variance: "+str(score_cl.sde.gamma(score_cl.sigmas[0][0]))
             if y!=None:
                 y = y['y'].to(data.device)
@@ -503,7 +506,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
             # Run euler steps
             for t in tqdm(range(0,int(score_cl.steps))): 
                 # DEBUG
-                grid_img = torchvision.utils.make_grid(x_t, nrow=min((len(y) or 1),10), normalize=True)
+                grid_img = torchvision.utils.make_grid(x_t, nrow=min((len(y) or 1),10), normalize=False)
                 torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
 
                 _, x_t, dt = score_cl.euler_step(x_t, y, t)

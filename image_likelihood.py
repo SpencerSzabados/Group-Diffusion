@@ -137,7 +137,7 @@ def main():
     data = load_data(
         data_dir=args.data_dir,
         batch_size=args.batch_size,
-        deterministic=True,
+        deterministic=False,
         image_size=args.image_size,
         class_cond=args.class_cond,
     )
