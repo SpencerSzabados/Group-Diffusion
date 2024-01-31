@@ -99,19 +99,21 @@ def main():
         os.environ['USER'] = args.user_id
 
     # Default parameter values 
-    sigma_max = 80.0 or args.sigma_max
-    sigma_min = 0.002 or args.sigma_min
-    num_timesteps = 100 or args.num_timesteps
-    sampling_eps = 1e-5 or args.sampling_eps
-    bpd_num_repeats = 1 # Average over the dataset this many times when computing likelihood 
+    sigma_max = args.sigma_max or 80.0
+    sigma_min = args.sigma_min or 0.002
+    sampler = args.sampler
+    steps = args.steps or 100
+    bpd_num_repeats = args.repeats or 1 # Average over the dataset this many times when computing likelihood 
 
-    if args.sde == "VESDE":
-        # Varaince exploding SDE
-        sde = sde_lib.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=num_timesteps)
-        print("sde.T: "+str(sde.T)) # DEBUG
-        print("sde.N: "+str(sde.N)) # DEBUG
+    if args.sde == "VPSDE":
+        sde = likelihood.VPSDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
+    elif args.sde == "VESDE":
+        sde = likelihood.VESDE(sigma_min=sigma_min, sigma_max=sigma_max, N=steps)
     else:
         NotImplementedError(f"SDE not implemented")
+
+    print("sde.T: "+str(sde.T)) # DEBUG
+    print("sde.N: "+str(sde.N)) # DEBUG
 
     likelihood_fn = likelihood.get_likelihood_fn(sde, get_data_inverse_scaler(), method='RK23', eps=0.01) # DEBUG: remove esp argument
 

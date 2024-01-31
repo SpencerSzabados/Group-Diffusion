@@ -769,7 +769,6 @@ def sample_ddim(
                 )
             else:
                 denoised = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
-            
             denoised.clamp_(-1, 1)
             pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
         elif pred_type == 'eps':

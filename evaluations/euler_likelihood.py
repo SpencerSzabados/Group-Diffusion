@@ -106,7 +106,7 @@ class SDE(abc.ABC):
                 """Create the drift and diffusion functions for the reverse SDE/ODE."""
                 drift, diffusion = sde_fn(x, t)
                 score = score_fn(x, t)
-                drift = drift - diffusion[:, None, None, None] ** 2 * score * (0.5 if self.probability_flow else 1.)
+                drift = drift - diffusion[:, None, None, None]**2 * score * (0.5 if self.probability_flow else 1.)
                 # Set the diffusion function to zero for ODEs.
                 diffusion = 0. if self.probability_flow else diffusion
                 return drift, diffusion
@@ -114,7 +114,7 @@ class SDE(abc.ABC):
             def discretize(self, x, y, t):
                 """Create discretized iteration rules for the reverse diffusion sampler."""
                 f, G = discretize_fn(x, t)
-                rev_f = f - G[:, None, None, None]**2*score_fn(x, y, t)*(0.5 if self.probability_flow else 1.)
+                rev_f = f - G**2 * score_fn(x, y, t)*(0.5 if self.probability_flow else 1.)
                 rev_G = th.zeros_like(G) if self.probability_flow else G
                 return rev_f, rev_G
         
@@ -140,7 +140,7 @@ class VPSDE(SDE):
 
     def get_sigmas_ddim(self, steps, ns=0.0002, ds=0.00025):
         dt = 1 / steps
-        times = th.linspace(1., 0., steps + 1)
+        times = th.linspace(1., 0., steps+1)
         times = th.stack((times[:-1], (times[1:] - dt).clamp_(min=0)), dim = 0)
         times = times.unbind(dim = -1)
         return times
@@ -148,6 +148,10 @@ class VPSDE(SDE):
     def gamma(self, t, ns=0.0002, ds=0.00025):
         """Given time t [0,1] compute DDIM sigma time parameterization values."""
         return  (th.cos((t+ns)/(1+ds)*th.pi/2))**2
+    
+    def f(self, t, ns=0.0002, ds=0.00025):
+        """Returns value of dlog(gamma(t))/dt"""
+        return -(th.pi*th.sin((t+ns)/(1+ds)*th.pi/2)) / (2*(1+ds)*th.cos((t+ns)/(1+ds)*th.pi/2))
 
     @property
     def T(self):
@@ -185,12 +189,9 @@ class VPSDE(SDE):
         s_in = x.new_ones([x.shape[0]])
 
         times = self.discrete_sigmas[t]
-        alpha = s_in*self.gamma(times[0]).to(x.device)
-        alpha_next = self.gamma(times[1])
-        
 
-        f = th.sqrt(alpha)[:, None, None, None]*x - x
-        G = th.sqrt(1-alpha)
+        f = 0.5*th.sqrt(self.f(times[0]))*x
+        G = th.sqrt(-self.f(times[0]))
         return f, G
 
 
@@ -244,7 +245,8 @@ class VESDE(SDE):
         # adjacent_sigma = th.where(t==0, th.zeros_like(t), self.discrete_sigmas.to(x.device)[t-1])
         adjacent_sigma = self.discrete_sigmas.to(x.device)[t-1] if t-1 >= 0 else 0.0
         f = th.zeros_like(x)
-        G = th.sqrt(sigma**2 - adjacent_sigma**2)
+        # G = th.sqrt(sigma**2 - adjacent_sigma**2)
+        G =  self.discrete_sigmas[t] - (0 if t-1 < 0 else self.discrete_sigmas[t-1])
         return f, G
 
 
@@ -342,19 +344,33 @@ class Karras_Score:
         if self.sde.type == 'VPSDE':
             t_now = self.sigmas[t][0]
             t_next = self.sigmas[t][1]
-            gamma_now = self.sde.gamma(t_now)   # TODO: The gammas might be wrong. gamma_next is for the current step still I should use gamma(t+1)
+            gamma_now = self.sde.gamma(t_now)   
             gamma_next = self.sde.gamma(t_next)
+            
             _, denoised = self.denoise(x, y, t_now*s_in)
+            denoised = denoised.clamp(-1,1)
+            pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
 
-            normalizer = th.sqrt((1.-gamma_next)/gamma_next)-th.sqrt((1.-gamma_now)/gamma_now)
+            # d = self.to_d(x_t/th.sqrt(gamma_next), normalizer*s_in, denoised/th.sqrt(gamma_now))
+            normalizer = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
+            d = self.to_d(x/th.sqrt(1+gamma_now), normalizer*s_in, denoised/th.sqrt(1+gamma_next))
+            # dt = th.sqrt((1.-gamma_next)/gamma_next)-th.sqrt((1.-gamma_now)/gamma_now)
 
-            d = self.to_d(x/th.sqrt(gamma_next), normalizer*s_in, denoised/th.sqrt(gamma_now))
-            dt = gamma_now-gamma_next
+            dt = 0.5*((1.-gamma_next)/gamma_next-(1.-gamma_now)/gamma_now)*th.sqrt(gamma_now/(1.-gamma_now))
+            # dt = t_now-t_next
 
-            x_t = th.sqrt(gamma_next)*x + th.sqrt(1-gamma_next)*d*dt
+            print(str(t_now)+", "+str(t_next))
+            print(str(gamma_now)+", "+str(gamma_next))
+            print(dt)
+            print(d*dt)
+
+            x_t = th.sqrt(gamma_now)*(x/th.sqrt(gamma_next) - d*dt)
+            # x_t1 = x_t + self.sde.f(t_next)*(x_t+d)*dt
+            # x_t1 = self.sde.f(t_now)*x_t*dt + th.sqrt(-self.sde.f(t_now))*pred_noise
 
         else:
             _, denoised = self.denoise(x, y, self.sigmas[t]*s_in)
+            denoised = denoised.clamp(-1,1)
             d = self.to_d(x, self.sigmas[t]*s_in, denoised)
             dt = self.sigmas[t] - (0 if t-1 < 0 else self.sigmas[t-1])
 
@@ -384,7 +400,7 @@ class Karras_Score:
 
         normalizer = th.sqrt((1-gamma_next)/gamma_next)-th.sqrt((1-gamma_now)/gamma_now)
 
-        d = self.to_d(x_t, normalizer*s_in, denoised)
+        d = self.to_d(x_t, t_now*s_in, denoised)
         return d
 
     def get_score(self, x, y, t):
@@ -474,19 +490,19 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher'):
     
         with th.no_grad():
             x_t = data+th.randn_like(data)*score_cl.sigma_min # Need to add noise to data as T='inf'
-            print(x_t.shape)
+            print("x shape: "+str(x_t.shape))
+            # print("noise variance: "+str(score_cl.sde.gamma(score_cl.sigmas[0][0]))
             if y!=None:
                 y = y['y'].to(data.device)
             logp = th.zeros((shape[0],)).to(data.device)
     
             # Run euler steps
             for t in tqdm(range(0,int(score_cl.steps))): 
-                _, x_t, dt = score_cl.euler_step(x_t, y, t)
-                # _, _, dt = score_cl.euler_step(x_t, y, t)
-                
                 # DEBUG
-                grid_img = torchvision.utils.make_grid(x_t, nrow = 1, normalize = True)
+                grid_img = torchvision.utils.make_grid(x_t, nrow=min((len(y) or 1),10), normalize=True)
                 torchvision.utils.save_image(grid_img, f'tmp_imgs/x_{t}_sample.pdf')
+
+                _, x_t, dt = score_cl.euler_step(x_t, y, t)
                 
                 drift, logp_grad = ode_func(x_t, y, t) 
                 

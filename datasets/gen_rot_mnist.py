@@ -27,6 +27,7 @@ from torchvision import transforms
 from torchvision.datasets.utils import download_and_extract_archive
 from torchvision import datasets
 
+from tqdm import tqdm
 
 ### Preprocess dataset 
 # The dataset is preprocesses to be in the expected form accepted by 
@@ -55,6 +56,29 @@ def gen_rot_mnist_c4_jpg(samples=600):
         image = image.rotate(90*k, expand=False)
         image.save(os.path.join(data_dir, f"{target}_{i}.JPEG"))
         
+
+def convert_jpy_npy():
+    files = [f for f in os.listdir(data_dir) if f.lower().endswith(('.jpg', '.jpeg'))]    
+    num_files = len(files)
+
+    train_images = th.empty(size=(num_files, 28, 28, 1))
+    train_lables = th.empty(size=(num_files,))
+    
+    convert_tensor = transforms.ToTensor()
+
+    i = 0
+    for file in tqdm(files):
+        image_path = os.path.join(data_dir, file)
+        label = int(file.split('_')[0])
+        train_lables[i] = label
+        image = convert_tensor(Image.open(image_path)).unsqueeze(1).reshape(-1, 28, 28, 1)
+        image = 2.*image - 1. # normalize data range to [-1,1]
+        train_images[i] = image
+        i += 1
+
+    np.save(os.path.join(data_dir, "train_images.npy"), train_images.numpy())
+    np.save(os.path.join(data_dir, "train_labels.npy"), train_lables.numpy())
+
 
 def gen_rot_mnist_jpg(samples=600):
     """Download the MNIST data if it doesn't exist in processed_folder already."""
@@ -188,8 +212,9 @@ def sample_rot_mnist_pdf(num_samples=10):
 def main():
     # gen_rot_mnist_jpg(samples=6000)
     # gen_rot_mnist_npy(samples=6000)
-    gen_rot_mnist_c4_jpg(samples=60000)
+    # gen_rot_mnist_c4_jpg(samples=60000)
     # sample_rot_mnist_pdf(num_samples=3)
+    convert_jpy_npy()
 
 
 if __name__ == '__main__':

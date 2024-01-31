@@ -221,16 +221,6 @@ def get_div_fn(fn):
         x.requires_grad_(False)
         return th.sum(grad_fn_eps * eps, dim=tuple(range(1, len(x.shape))))
 
-    # def div_fn(x, t, noise):
-    #     with th.enable_grad():
-    #         sigma = (80. ** (1 / 7.) + t*(0.002 ** (1 / 7.)-80. ** (1 / 7.)))**7.
-    #         x_t = x + noise * sigma
-    #         x_t.requires_grad_(True)
-    #         fn_noise = th.sum(fn(x_t, t)*noise)
-    #         grad_fn_noise = th.autograd.grad(fn_noise, x_t)[0]
-    #     x_t.requires_grad_(False)
-    #     return th.sum(grad_fn_noise * noise, dim=tuple(range(1, len(x_t.shape))))
-
     return div_fn
 
 
