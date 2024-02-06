@@ -4,9 +4,12 @@
     computing fid with 'fid_score.py'.
 """
 
+
+import os
 import numpy as np
 from PIL import Image
-import os
+import torch as th
+import torchvision
 
 def convert_npz_to_jpegs(npz_file, output_folder):
     # Load the .npz file
@@ -31,12 +34,11 @@ def convert_npz_to_jpegs(npz_file, output_folder):
 
 def main():
     # Specify the path to your .npz file and the output folder
-    npz_file_path = '/home/datasets/fid_samples_2/samples_50000x28x28x3.npz'
+    npz_file_path = "/home/sszabados/checkpoints/Group-Diffusion/lysto64_D4_oc_ddim_selfc/1706505220_1001_128_64_64.npz" # TODO: remove
     output_folder_path = '/home/datasets/fid_samples_2/'
 
     # Call the function to perform the conversion
     convert_npz_to_jpegs(npz_file_path, output_folder_path)
-
 
 if __name__=="__main__":
     main()
