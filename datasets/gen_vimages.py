@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2023-12-24 
 
     Script for generating v-ertically symmetric (SE2) group binary image dataset

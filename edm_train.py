@@ -25,6 +25,7 @@ def create_argparser():
         g_equiv=False,
         g_input=None,
         g_output=None,
+        self_cond=False,
         diff_type='pfode',
         pred_type='x',
         eqv_reg=None,
@@ -94,9 +95,12 @@ def main():
     TrainLoop(
         model=model,
         diffusion=diffusion,
+        self_cond=args.self_cond,
         diff_type=args.diff_type,
         pred_type=args.pred_type,
+        eqv_reg=args.eqv_reg,
         data=data,
+        data_augment=args.data_augment,
         batch_size=batch_size,
         microbatch=args.microbatch,
         lr=args.lr,
@@ -110,7 +114,6 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
-        data_augment=args.data_augment
     ).run_loop()
 
 

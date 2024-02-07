@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2023-12-24
 
     File contains scripts for generating LYSTO dataset (https://zenodo.org/records/3513571) 

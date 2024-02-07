@@ -73,10 +73,13 @@ class UNetModel(nn.Module):
         g_equiv=False,
         g_input=None,
         g_output=None,
+        self_cond=False,
         dropout=0,
         channel_mult=(1, 2, 4, 8),
         conv_resample=True,
         dims=2,
+        kerenl_size=3,
+        padding=1,
         num_classes=None,
         use_checkpoint=False,
         use_fp16=False,
@@ -100,8 +103,9 @@ class UNetModel(nn.Module):
         self.g_equiv = g_equiv
         self.g_input = g_input
         self.g_output = g_output
-        self.kernel_size = 3 # TODO: Define these values using arguments to the model
-        self.padding = 1     # TODO: Define these values using arguments to the model
+        self.self_cond = self_cond
+        self.kernel_size = kerenl_size 
+        self.padding = padding    
         self.num_res_blocks = num_res_blocks
         self.attention_resolutions = attention_resolutions
         self.dropout = dropout
@@ -311,7 +315,7 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps, y=None):
+    def forward(self, x, timesteps, y=None, x_cond=None):
         """
         Apply the model to an input batch.
 
@@ -327,8 +331,14 @@ class UNetModel(nn.Module):
         hs = []
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
 
+        # Self conditioning 
+        if self.self_cond:
+            if x_cond is None:
+                x_cond = th.zeros_like(x)
+            x = th.cat((x_cond, x), dim=1)
+
         if self.num_classes is not None:
-            assert y.shape == (x.shape[0],)
+            assert y.shape == (x.shape[0],), f"{y.shape} should equal {x.shape[0]}"
             emb = emb + self.label_emb(y) 
 
         h = x.type(self.dtype)

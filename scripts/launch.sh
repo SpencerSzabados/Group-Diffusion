@@ -4,6 +4,8 @@
 ######################################################################################
 # Testing code 
 ######################################################################################
+CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/checkpoints/temp python edm_train_fid.py --g_equiv False --self_cond True --g_input Z2_K --g_output C4_K --diff_type ddim --sampler ddim --data_augment 0 --pred_type x --attention_resolutions 32,16,8 --class_cond True --channel_mult 1,2,4 --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 500 --image_size 28 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 1000 --sampling_interval 1000 --data_dir /home/datasets/c4_mnist --ref_dir /home/datasets/c4_mnist_50000 --sampling_dir /home/datasets/fid_samples_3 --resume_checkpoint /home/checkpoints/temp/
+
 
 ######################################################################################
 # Trainning non-group equivarient EDM model on unconditional C4 toy image dataset

@@ -150,7 +150,8 @@ class GSymmetrize(nn.Module):
     :param x: Input feature vector 
     :param g_input: One of {Z2, C4, D4} as supported by GrouPy.
 
-    TODO: Finish the implementation of this layer and call the above operations 
+    TODO: Finish the implementation of this layer and call the above operations. Note, this layer 
+          is not used currently.
     TODO: Currently this only supports C4 and will not generalize to non-rotation groups easily.
     """
 

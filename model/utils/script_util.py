@@ -37,6 +37,8 @@ def model_and_diffusion_defaults():
         g_equiv=False,
         g_input=None,
         g_output=None,
+        self_cond=False,
+        kernel_size=3,
         sigma_min=0.002,
         sigma_max=80.0,
         image_size=64,
@@ -72,6 +74,8 @@ def create_model_and_diffusion(
     g_equiv,
     g_input,
     g_output,
+    self_cond,
+    kernel_size,
     num_heads,
     num_head_channels,
     num_heads_upsample,
@@ -97,6 +101,8 @@ def create_model_and_diffusion(
         g_equiv=g_equiv,
         g_input=g_input,
         g_output=g_output,
+        self_cond=self_cond,
+        kernel_size=kernel_size,
         learn_sigma=learn_sigma,
         class_cond=class_cond,
         use_checkpoint=use_checkpoint,
@@ -112,8 +118,10 @@ def create_model_and_diffusion(
         data_augment=data_augment,
     )
 
-    if not data_augment:
+    if data_augment == 0:
         aug_pip_arg = None
+    elif data_augment > 0:
+        aug_pip_arg = aug_pip_arg
 
     diffusion = KarrasDenoiser(
         diff_type=diff_type,
@@ -135,6 +143,8 @@ def create_model(
     g_equiv=False,
     g_input=None,
     g_output=None,
+    self_cond=False,
+    kernel_size=3,
     learn_sigma=False,
     class_cond=False,
     use_checkpoint=False,
@@ -161,7 +171,7 @@ def create_model(
         elif image_size == 32:
             channel_mult = (1, 2, 4)
         elif image_size == 28:
-            channel_mult = (1, 4, 16)
+            channel_mult = (1, 2, 4)
         else:
             raise ValueError(f"unsupported image size: {image_size}")
     else:
@@ -173,7 +183,7 @@ def create_model(
 
     return UNetModel(
         image_size=image_size,
-        in_channels=3,
+        in_channels=3*2 if self_cond else 3,
         model_channels=num_channels,
         out_channels=(3 if not learn_sigma else 6),
         num_res_blocks=num_res_blocks,
@@ -181,6 +191,7 @@ def create_model(
         g_equiv=g_equiv,
         g_input=g_input,
         g_output=g_output,
+        self_cond=self_cond,
         dropout=dropout,
         channel_mult=channel_mult,
         num_classes=(NUM_CLASSES if class_cond else None),

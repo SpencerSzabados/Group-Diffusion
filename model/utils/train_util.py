@@ -36,7 +36,10 @@ class TrainLoop:
         model,
         diffusion,
         diff_type,
+        self_cond,
+        pred_type='pfode',
         data,
+        data_augment=0,
         batch_size,
         microbatch,
         lr,
@@ -45,7 +48,6 @@ class TrainLoop:
         save_interval,
         resume_checkpoint,
         sampling_interval=0,
-        pred_type='pfode',
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
@@ -53,23 +55,30 @@ class TrainLoop:
         lr_anneal_steps=0,
         start_ema=None,
         eqv_reg=None,
-        data_augment=0,
     ):
         self.model = model
         self.diffusion = diffusion
         self.pred_type = pred_type
+        self.eqv_reg = eqv_reg
+        self.self_cond = self_cond
         self.data = data
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
+        self.global_batch = self.batch_size * dist.get_world_size()
         self.lr = lr
+        self.lr_anneal_steps = lr_anneal_steps
+        self.weight_decay = weight_decay
         self.ema_rate = (
             [ema_rate]
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
         )
+        self.target_ema = start_ema
         self.log_interval = log_interval
         self.save_interval = save_interval
         self.resume_checkpoint = resume_checkpoint
+        self.step = 0
+        self.resume_step = 0
         if sampling_interval > 0:
             if sampling_interval < save_interval:
                 logger.log("Sampling_interval < save_interval, setting sampling_interval=save_interval.")
@@ -79,16 +88,7 @@ class TrainLoop:
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
-        self.weight_decay = weight_decay
-        self.lr_anneal_steps = lr_anneal_steps
-
-        self.step = 0
-        self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
-
-        self.target_ema = start_ema
-        self.eqv_reg = eqv_reg
-
+    
         self.sync_cuda = th.cuda.is_available()
 
         self._load_and_sync_parameters()
@@ -215,36 +215,6 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
-                
-                # Code for performing incremental image sampling during training.
-                # TODO: Make this function more general and accept model paramters during sampling 
-                #       rather than the hard coded values used currently.
-                #       This sould be modified if training on a dataset of different resolution.
-                logger.log("generating samples...")
-                
-                generator = get_generator('determ', 40, 42)
-                sample = karras_sample(
-                    self.diffusion,
-                    self.model,
-                    (40, 3, 28, 28), # [Batch_size, kernel_size, Height, Width]
-                    steps=40,
-                    model_kwargs={'y':th.arange(start=0, end=10, device=distribute_util.dev()).repeat(4)}, #Default {}
-                    device=distribute_util.dev(),
-                    clip_denoised=True,
-                    sampler='ddim',
-                    sigma_min=0.002,
-                    sigma_max=80.0,
-                    s_churn=0.0,
-                    s_tmin=0.0,
-                    s_tmax=float("inf"),
-                    s_noise=1.0,
-                    generator=generator,
-                    ts="",
-                )
-                # Save the generated sample images
-                logger.log("sampled tensor shape: "+str(sample.shape))
-                grid_img = torchvision.utils.make_grid(sample, nrow = 10, normalize = True)
-                torchvision.utils.save_image(grid_img, f'tmp_imgs/{self.step}.pdf')
 
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -292,6 +262,7 @@ class TrainLoop:
                 model_kwargs=micro_cond,
                 target_model=self.target_model if self.eqv_reg else None,
                 eqv_reg=self.eqv_reg,
+                self_cond=self.self_cond
             )
 
             if last_batch or not self.use_ddp:

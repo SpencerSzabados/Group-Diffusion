@@ -7,6 +7,7 @@ reference_code/
 *.JPEG
 *.pdf
 tmp*
+/tmp*
 tmp_imgs/
 tmp_imgs_c4_c4/
 tmp_imgs_flip_flip/

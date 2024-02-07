@@ -89,7 +89,7 @@ class KarrasDenoiser:
         c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
         return c_skip, c_out, c_in
     
-    def training_losses(self, model, x_start, sigmas, pred_type='x', cond_noise=0, model_kwargs=None, noise=None, eqv_reg=None, target_model=None):
+    def training_losses(self, model, x_start, sigmas, pred_type='x', self_cond=False, cond_noise=0, model_kwargs=None, noise=None, eqv_reg=None, target_model=None):
         with th.no_grad():
             if hasattr(self, 'aug_pip'):
                 x_start, augment_labels = self.aug_pip(x_start)
@@ -109,10 +109,17 @@ class KarrasDenoiser:
         else:
             raise NotImplementedError(f"Error: diff_type={self.diff_type} is not currently supported.")
         
-        model_output, denoised = self.denoise(model, x_t, sigmas, **model_kwargs)
+        x_cond = None
+        if self_cond:
+            if np.random.rand() < 0.5: # TODO: make this a conditional argument 
+                with th.no_grad():
+                    _, x_cond_denoised = self.denoise(model, x_t, sigmas.squeeze(), x_cond=x_cond, **model_kwargs)
+                    x_cond = x_cond_denoised.detach()
+
+        model_output, denoised = self.denoise(model, x_t, sigmas.squeeze(), x_cond=x_cond, **model_kwargs)
 
         target_model_ouput = None
-        if target_model:
+        if target_model is not None:
             with th.no_grad():
                 aug_op, aug_op_inv = get_eqv_reg_pair(eqv_reg)
                 # 1) aug x_t according to eqv_reg
@@ -172,8 +179,7 @@ class KarrasDenoiser:
         def denoise_fn(x, t):
             return self.denoise(model, x, t, **model_kwargs)[1]
 
-        if target_model:
-
+        if target_model is not None:
             @th.no_grad()
             def target_denoise_fn(x, t):
                 return self.denoise(target_model, x, t, **model_kwargs)[1]
@@ -406,6 +412,7 @@ def karras_sample(
     pred_type='x',
     data_augment=0,
     eqv_reg=None,
+    self_cond=False,
     clip_denoised=True,
     progress=False,
     callback=None,
@@ -458,7 +465,7 @@ def karras_sample(
             ts=ts, t_min=sigma_min, t_max=sigma_max, rho=diffusion.rho, steps=steps
         )
     else:
-        sampler_args = dict(eqv_reg=eqv_reg)
+        sampler_args = dict(eqv_reg=eqv_reg, self_cond=self_cond)
 
     if eqv_reg is not None:
         _, _, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
@@ -731,6 +738,56 @@ def sample_dpm(
 
 
 @th.no_grad()
+def sample_ddpm(
+    denoiser,
+    x,
+    sigmas,
+    generator,
+    eqv_reg=None,
+    progress=False,
+    callback=None,
+    s_churn=0.0,
+    s_tmin=0.0,
+    s_tmax=float("inf"),
+    s_noise=1.0,
+    pred_type='x',
+    self_cond=False,
+):
+    """Implements Algorithm 2 (Heun steps) from Karras et al. (2022)."""
+    s_in = x.new_ones([x.shape[0]])
+    time_pairs = sigmas
+    aug_data = dict()
+    aug_data['x_cond'] = None
+
+    if self_cond and (eqv_reg is not None):
+        raise NotImplementedError(f"{self_cond} and {eqv_reg} is not currently supported.")
+
+    if eqv_reg is not None:
+        aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
+
+    for time, time_next in tqdm(time_pairs):
+        if eqv_reg is not None:
+            denoised = aug_op_inv(
+                denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), **aug_data)
+            )
+        else:
+            denoised = denoiser(x_t = x, sigma = time * s_in, **aug_data)
+
+
+        if self_cond:
+            aug_data['x_cond'] = denoised.clone()
+            
+        denoised.clamp_(-1, 1)
+        gamma_now = gamma(time)
+        alpha_now = gamma(time)/gamma(time_next)
+        sigma_now = th.sqrt(1-alpha_now)
+        noise = generator.randn_like(x)
+        eps = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now) 
+        x = 1./th.sqrt(alpha_now)*(x-(1.-alpha_now)/th.sqrt(1.-gamma_now)*eps) + sigma_now*noise
+    return x
+
+
+@th.no_grad()
 def sample_ddim(
     denoiser,
     x,
@@ -738,6 +795,7 @@ def sample_ddim(
     generator,
     pred_type='x',
     eqv_reg=None,
+    self_cond=False,
     progress=False,
     callback=None,
     s_churn=0.0,
@@ -750,10 +808,14 @@ def sample_ddim(
     time_pairs = sigmas
     aug_data = dict()
     aug_data_ = dict()
+    x_cond = None
     
     for k in aug_data:
         print(k)
         aug_data_[k] = para_aug(aug_data[k])
+
+    if self_cond and (eqv_reg is not None):
+        raise NotImplementedError(f"{self_cond} and {eqv_reg} is not currently supported.")
 
     if eqv_reg is not None:
         aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
@@ -765,11 +827,10 @@ def sample_ddim(
         if pred_type == 'x':
             if eqv_reg is not None:
                 denoised = aug_op_inv(
-                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), aug_data=aug_data_)
+                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), x_cond=x_cond, aug_data=aug_data_)
                 )
             else:
-                denoised = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
-            
+                denoised = denoiser(x_t=x, sigma=time*s_in, x_cond=x_cond, aug_data=aug_data)
             denoised.clamp_(-1, 1)
             pred_noise = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now)
         elif pred_type == 'eps':
@@ -781,7 +842,10 @@ def sample_ddim(
                 pred_noise = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
             denoised = (x-th.sqrt(1-gamma_now)*pred_noise)/th.sqrt(gamma_now) 
         else:
-            raise NotImplementedError(f"Error: pred_type={pred_type} is not currently supported.")          
+            raise NotImplementedError(f"Error: pred_type={pred_type} is not currently supported.")  
+
+        if self_cond:
+            x_cond = denoised.clone()        
 
         x = th.sqrt(gamma_next)*denoised+th.sqrt(1-gamma_next)*pred_noise
     return x
@@ -911,7 +975,7 @@ def get_eqv_reg_pair(eqv_reg):
                 return th.flip(x_, [-2]) if v_flip else x_
 
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"eqv_reg: {eqv_reg} is not currently supported.")
         
         return aug_op, aug_op_inv
 

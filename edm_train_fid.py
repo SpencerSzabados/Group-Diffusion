@@ -1,7 +1,7 @@
 """
     Script for training a diffusion model on image data using EDM (https://github.com/NVlabs/edm)
-    methodology. This script is modified to pause training after a selected number of steps and 
-    compute the current fid score then resume training. 
+    methodology. This script is a modified version of 'edm_train.py' that pauses training after 
+    a user selected number of steps and compute the current fid score before resuming training. 
 """
 
 import os
@@ -29,11 +29,13 @@ from evaluations.fid_score import calculate_fid_given_paths
 def create_argparser():
     defaults = dict(
         data_dir="",
+        data_augment=0,
         ref_dir="",
         sampling_dir="",
         g_equiv=False,
         g_input=None,
         g_output=None,
+        self_cond=False,
         channel_mult="",
         diff_type='pfode',
         lr=1e-4,
@@ -53,7 +55,6 @@ def create_argparser():
         fp16_scale_growth=1e-3,
         user_id='dummy',
         slurm_id='-1',
-        data_augment=0,
         generator="determ",
         sampler='euler',
         pred_type='x',
@@ -91,7 +92,6 @@ def calculate_fid(diffusion, model, args, step):
         all_labels = []
         generator = get_generator(args.generator, args.num_samples, args.seed)
 
-        # TODO: Determine a better way to set this parameter
         if args.batch_size < 0:
             args.batch_size = args.global_batch_size
 
@@ -192,7 +192,6 @@ def main():
     distribute_util.setup_dist()
     logger.configure()
 
-
     logger.log("Creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
@@ -220,9 +219,12 @@ def main():
     trainloop = TrainLoop(
         model=model,
         diffusion=diffusion,
+        self_cond=args.self_cond,
         diff_type=args.diff_type,
         pred_type=args.pred_type,
+        eqv_reg=args.eqv_reg,
         data=data,
+        data_augment=args.data_augment,
         batch_size=batch_size,
         microbatch=args.microbatch,
         lr=args.lr,
@@ -237,7 +239,6 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
-        data_augment=args.data_augment
     )
 
     # Training and sampling loop

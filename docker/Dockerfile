@@ -1,7 +1,6 @@
 # Docker config file for building image for Group-Diffusion
 # This config file is based on that provided in (https://github.com/openai/consistency_models)
 #
-# Author: Spencer Szabados
 # Date  : 2023-12-04
 #
 # Note, setup.py is not longer supported by setuptools > v58.2

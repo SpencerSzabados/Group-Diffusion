@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2024-01-03
 
     File contains scripts for generating the rotmnist dataset proposed in 

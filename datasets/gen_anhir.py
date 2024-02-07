@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2023-12-25
 
     This file contains scripts for generating (preprocessing) the ANHIR dataset published 

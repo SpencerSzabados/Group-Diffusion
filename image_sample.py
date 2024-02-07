@@ -4,7 +4,7 @@
     produce samples for FID evaluation.
 
     TODO: Add command line argument for generating either a .npz file archive or
-          directory full of .JPEG images.
+          directory full of .JPEG images, save_as value.
 """
 
 import os

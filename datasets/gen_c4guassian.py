@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2023-12-24 
 
     File contains scripts for generating C4 invariant guassian mixture dataset used for test

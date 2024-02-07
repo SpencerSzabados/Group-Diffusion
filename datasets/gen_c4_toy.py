@@ -1,5 +1,4 @@
 """
-    Author: Spencer Szabados
     Date: 2023-12-24 
 
     Script for generating toy example of C4 group binary image dataset to test if the model
