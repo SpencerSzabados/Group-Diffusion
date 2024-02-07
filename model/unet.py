@@ -38,16 +38,24 @@ class UNetModel(nn.Module):
         embedding of input. This value is later scaled by the entreis of channel_mult 
         to build subsequent layers.
     :param out_channels: number of channels in the returned output Tensor.
+    :param channel_mult: channel multiplier for each level of the UNet, used to scale
+        layer input and output channels.
     :param num_res_blocks: number of residual blocks per up-down-sample.
     :param attention_resolutions: a collection of downsample rates at which
         attention will take place. May be a set, list, or tuple. For example, if this 
         contains 4, then at 4x downsampling, attention will be used.
     :param dropout: dropout probability.
-    :param channel_mult: channel multiplier for each level of the UNet, used to scale
-        layer input and output channels.
+    :param self_cond: if True, model makes used of self conditioning.
     :param conv_resample: if True, use learned convolutions for upsampling and
         downsampling.
-    :param dims: determines if the signal is 1D, 2D, or 3D.
+    :param g_equiv: if True, model expect arguments for {g_input, g_output} that set
+        which group the model is made be invariant under.
+    :param g_input: input group, one of {Z2, C4_K, D4_K, C4_G, D4_G}
+    :param g_output: output group, one of {Z2, C4_K, D4_K, C4_G, D4_G}, this is the 
+        group the model output is constrained to invariant to.
+    :param dims: determines if the signal is 1D, 2D, or 3D for convolutional layers.
+    :param kernel_size: sets the kernel size used in convolutional layers.
+    :param padding: sets padding used in convolutional layers.
     :param num_classes: if specified (as an int), then this model will be
         class-conditional with `num_classes` classes.
     :param use_checkpoint: use gradient checkpointing to reduce memory usage.
