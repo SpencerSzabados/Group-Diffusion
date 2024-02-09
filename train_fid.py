@@ -1,6 +1,6 @@
 """
     Script for training a diffusion model on image data using EDM (https://github.com/NVlabs/edm)
-    methodology. This script is a modified version of 'edm_train.py' that pauses training after 
+    methodology. This script is a modified version of 'train.py' that pauses training after 
     a user selected number of steps and compute the current fid score before resuming training. 
 """
 
@@ -44,7 +44,7 @@ def create_argparser():
         global_batch_size=2048,
         batch_size=-1,
         microbatch=-1,      # -1 disables microbatches
-        start_ema=None,
+        start_ema=0.95,
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
@@ -222,7 +222,7 @@ def main():
         self_cond=args.self_cond,
         diff_type=args.diff_type,
         pred_type=args.pred_type,
-        eqv_reg=args.eqv_reg,
+        eqv_reg=args.eqv_reg if hasattr(args, 'eqv_reg') else None,
         data=data,
         data_augment=args.data_augment,
         batch_size=batch_size,

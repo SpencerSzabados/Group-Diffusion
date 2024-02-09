@@ -140,57 +140,6 @@ class D4_Symmetric(nn.Module):
     def right_inverse(self, A):
         return A
 
-# ---[ ]
-
-class GSymmetrize(nn.Module):
-    """
-    Layer symmetrizes input features based on specified group action so that the resulting output
-    lies within the support of the probability distribution under the specified group.
-
-    :param x: Input feature vector 
-    :param g_input: One of {Z2, C4, D4} as supported by GrouPy.
-
-    TODO: Finish the implementation of this layer and call the above operations. Note, this layer 
-          is not used currently.
-    TODO: Currently this only supports C4 and will not generalize to non-rotation groups easily.
-    """
-
-    def __init__(self, g_output):
-        """
-        :param x: Input feature vector of shape [N,C,H,W] in the lattent space of unet.
-            As this is in the lattent space the H,W value will differ from that of the inputs.
-        :param g_output: One of {Z2, C4, D4} group action as specified in GrouPy.
-            g_output is used to genearte a set of vector permutations to symmetrize x.
-        :self actions: Random integers sampled from [N, {0,1,2,...,nti}]
-        """
-
-        super(GSymmetrize, self).__init__()
-
-        self.nti = 1
-        if g_output == 'Z2':
-            self.nti = 1
-        elif g_output == 'H2' or g_output == 'V2':
-            self.nti = 2
-        elif g_output == 'C4':
-            self.nti = 4
-        elif g_output == 'D4':
-            self.nti = 8
-        else:
-            raise ValueError(f"unsupported g_input in Symetrize __init__(): {self.g_input}")
-        
-    def forward(self, x):
-        input_shape = x.shape
-        rot_angles = pt.randint(low=0,high=self.nti, size=(input_shape[0],))
-        
-        y = pt.zeros_like(x).to(x.device)
-        for angle in range(self.nti):
-            idx_mask = (rot_angles == angle).to(x.device) # Mark which input vectors to rotate
-            idx_mask = pt.reshape(idx_mask, [input_shape[0], 1, 1, 1])
-            y = y + pt.rot90(x*idx_mask, k=angle, dims=[2,3])
-        
-        return y
-
-
 
 ### ---[ Group equivariant convolutions ]--------
 """
@@ -386,6 +335,8 @@ class KernelGConv2d(nn.Module):
             self.num_group = 2
         elif self.g_output == 'C4':
             self.num_group = 4
+        elif self.g_output == "D4":
+            self.num_group = 8
         else:
             raise NotImplementedError
 
@@ -463,6 +414,32 @@ class KernelGConv2d(nn.Module):
                     dilation = 1,
                     groups = 1
                 )
+        elif self.g_output == "D4":
+            kernel = self.conv_weight
+            for k in range(4):
+                kernel = th.rot90(kernel, k=1, dims=[-1, -2])
+                out = out + F.conv2d(
+                    input = input, 
+                    weight = kernel,
+                    bias = None, 
+                    stride = self.stride, 
+                    padding = self.padding,
+                    dilation = 1,
+                    groups = 1
+                )
+            kernel = th.flip(self.conv_weight, dims=[-2])
+            out += out
+            for k in range(4):
+                kernel = th.rot90(kernel, k=1, dims=[-1, -2])
+                out = out + F.conv2d(
+                    input = input, 
+                    weight = kernel,
+                    bias = None, 
+                    stride = self.stride, 
+                    padding = self.padding,
+                    dilation = 1,
+                    groups = 1
+                )
         else:
             raise NotImplementedError
         
@@ -491,7 +468,7 @@ def gconv_nd(dims, g_equiv=False, g_input=None, g_output=None, *args, **kwargs):
                     logger.info(f'Initializing K weight tied equiv. layer: {g_input, g_output}')
                     return KernelGConv2d(g_input, g_output, *args, **kwargs)
                 # If masking kernel symmetric kerel layer is desired 
-                elif suffix == 'G':
+                elif suffix == 'S':
                     logger.info(f'Initializing G weight tied equiv. layer: {g_input, g_output}')
                     if g_output == 'H':
                         layer = nn.Conv2d(*args, **kwargs)

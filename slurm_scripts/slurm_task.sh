@@ -16,7 +16,7 @@ singularity run -e --nv \
     --bind /h/field/DiffGAN/circ_diff_vector:/circ_diff_vector \
     --bind /checkpoint:/checkpoint \
     /h/field/ssd004/cm_export.sif \
-    mpiexec -n 2 python /circ_diff_vector/edm_train.py --attention_resolutions 32,16,8 \
+    mpiexec -n 2 python /circ_diff_vector/train.py --attention_resolutions 32,16,8 \
         --class_cond True --use_scale_shift_norm True --dropout 0.1 \
         --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 512  \
         --image_size 32 --lr 0.0001 --num_channels 192 --num_head_channels 64 \

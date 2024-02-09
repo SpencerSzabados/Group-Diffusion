@@ -36,7 +36,7 @@ def create_argparser():
         global_batch_size=2048,
         batch_size=-1,
         microbatch=-1,      # -1 disables microbatches
-        start_ema=None,
+        start_ema=0.95,
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,

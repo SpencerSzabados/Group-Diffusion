@@ -115,6 +115,10 @@ class KarrasDenoiser:
                 with th.no_grad():
                     _, x_cond_denoised = self.denoise(model, x_t, sigmas.squeeze(), x_cond=x_cond, **model_kwargs)
                     x_cond = x_cond_denoised.detach()
+                    
+                    if pred_type == 'eps':
+                        denoised = (x_t-th.sqrt(1-gamma(append_dims(sigmas, dims)))*x_cond)/th.sqrt(gamma(append_dims(sigmas, dims)))            
+                        x_cond = denoised
 
         model_output, denoised = self.denoise(model, x_t, sigmas.squeeze(), x_cond=x_cond, **model_kwargs)
 
@@ -124,8 +128,10 @@ class KarrasDenoiser:
                 aug_op, aug_op_inv = get_eqv_reg_pair(eqv_reg)
                 # 1) aug x_t according to eqv_reg
                 aug_x_t = aug_op(x_t)
+                aug_x_cond = aug_op(x_cond) if x_cond is not None else None
                 # 2) compute denoised of aug_x_t using target model
-                aug_model_output, aug_denoised = self.denoise(target_model, aug_x_t, sigmas, **model_kwargs)
+                target_model.eval()
+                aug_model_output, aug_denoised = self.denoise(target_model, aug_x_t, sigmas.squeeze(), aug_x_cond, **model_kwargs)
                 # 3) apply reverse aug over aug_denoised
                 # inv_aug_denoised = aug_op_inv(aug_denoised.detach())
                 target_model_ouput = aug_op_inv(aug_model_output.detach())
@@ -385,22 +391,34 @@ class KarrasDenoiser:
 
         return terms
 
-    def denoise(self, model, x_t, sigmas, **model_kwargs):
-        import torch.distributed as dist
-        if not self.distillation:
-            c_skip, c_out, c_in = [
-                append_dims(x, x_t.ndim) for x in self.get_scalings(sigmas)
-            ]
-        else:
-            c_skip, c_out, c_in = [
-                append_dims(x, x_t.ndim)
-                for x in self.get_scalings_for_boundary_condition(sigmas)
-            ]
+    def denoise(self, model, x_t, sigmas, x_cond, **model_kwargs):
+        if self.diff_type == 'pfode':
+            if not self.distillation:
+                c_skip, c_out, c_in = [
+                    append_dims(x, x_t.ndim) for x in self.get_scalings(sigmas)
+                ]
+            else:
+                c_skip, c_out, c_in = [
+                    append_dims(x, x_t.ndim)
+                    for x in self.get_scalings_for_boundary_condition(sigmas)
+                ]
 
-        rescaled_t = 1000 * 0.25 * th.log(sigmas + 1e-44)
-        model_output = model(c_in * x_t, rescaled_t, **model_kwargs)
-        denoised = c_out * model_output + c_skip * x_t
-        
+            if x_cond is not None:
+                x_cond /= self.sigma_data
+
+            rescaled_t = 1000 * 0.25 * th.log(sigmas + 1e-44)
+            model_kwargs['x_cond'] = x_cond
+            model_output = model(c_in * x_t, rescaled_t, **model_kwargs)
+            denoised = c_out * model_output + c_skip * x_t
+
+        elif self.diff_type == 'ddim':
+            model_kwargs['x_cond'] = x_cond
+            model_output = model(x_t, 1000*sigmas, **model_kwargs)
+            denoised = model_output
+
+        else:
+            raise NotImplementedError(f"diff_type={self.diff_type} is not currently supported.")
+            
         return model_output, denoised
 
 
@@ -465,7 +483,7 @@ def karras_sample(
             ts=ts, t_min=sigma_min, t_max=sigma_max, rho=diffusion.rho, steps=steps
         )
     else:
-        sampler_args = dict(eqv_reg=eqv_reg, self_cond=self_cond)
+        sampler_args = dict(eqv_reg=eqv_reg, self_cond=self_cond, pred_type=pred_type)
 
     if eqv_reg is not None:
         _, _, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
@@ -474,11 +492,11 @@ def karras_sample(
             model_kwargs_[k] = para_aug(model_kwargs[k])
         model_kwargs = model_kwargs_
 
-    def denoiser(x_t, sigma, aug_data=dict()):
+    def denoiser(x_t, sigma, x_cond, aug_data=dict()):
         if data_augment>0:
             aug_data["aug_labels"] = th.zeros(x_t.size(0), data_augment, device=x_t.device)
 
-        _, denoised = diffusion.denoise(model, x_t, sigma, **aug_data, **model_kwargs)
+        _, denoised = diffusion.denoise(model, x_t, sigma, x_cond=x_cond, **aug_data, **model_kwargs)
 
         if clip_denoised:
             denoised = denoised.clamp(-1, 1)
@@ -593,6 +611,7 @@ def sample_heun(
     x,
     sigmas,
     generator,
+    pred_type='x',
     progress=False,
     callback=None,
     s_churn=0.0,
@@ -603,6 +622,9 @@ def sample_heun(
     """Implements Algorithm 2 (Heun steps) from Karras et al. (2022)."""
     s_in = x.new_ones([x.shape[0]])
     indices = range(len(sigmas) - 1)
+    aug_data = dict()
+    x_cond = None
+
     if progress:
         from tqdm.auto import tqdm
 
@@ -766,23 +788,35 @@ def sample_ddpm(
         aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
 
     for time, time_next in tqdm(time_pairs):
-        if eqv_reg is not None:
-            denoised = aug_op_inv(
-                denoiser(x_t = aug_op(x), sigma = para_aug(time * s_in), **aug_data)
-            )
-        else:
-            denoised = denoiser(x_t = x, sigma = time * s_in, **aug_data)
-
-
-        if self_cond:
-            aug_data['x_cond'] = denoised.clone()
-            
-        denoised.clamp_(-1, 1)
         gamma_now = gamma(time)
         alpha_now = gamma(time)/gamma(time_next)
         sigma_now = th.sqrt(1-alpha_now)
+
+        if pred_type == 'x':
+            if eqv_reg is not None:
+                denoised = aug_op_inv(
+                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), **aug_data)
+                )
+            else:
+                denoised = denoiser(x_t=x, sigma=time*s_in, **aug_data)
+            if self_cond:
+                aug_data['x_cond'] = denoised.clone()
+            denoised.clamp_(-1, 1)
+            eps = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now) 
+        elif pred_type =='eps':
+            if eqv_reg is not None:
+                eps = aug_op_inv(
+                    denoiser(x_t=aug_op(x), sigma=para_aug(time*s_in), **aug_data)
+                )
+            else:
+                eps = denoiser(x_t=x, sigma=time*s_in, **aug_data)
+            if self_cond:
+                denoised = (x-th.sqrt(1-gamma_now)*eps)/th.sqrt(gamma_now)
+                aug_data['x_cond'] = denoised
+        else:
+            raise NotImplementedError(f'pred_type={pred_type} not currently supported.')
+        
         noise = generator.randn_like(x)
-        eps = (x-th.sqrt(gamma_now)*denoised)/th.sqrt(1-gamma_now) 
         x = 1./th.sqrt(alpha_now)*(x-(1.-alpha_now)/th.sqrt(1.-gamma_now)*eps) + sigma_now*noise
     return x
 
@@ -811,11 +845,7 @@ def sample_ddim(
     x_cond = None
     
     for k in aug_data:
-        print(k)
         aug_data_[k] = para_aug(aug_data[k])
-
-    if self_cond and (eqv_reg is not None):
-        raise NotImplementedError(f"{self_cond} and {eqv_reg} is not currently supported.")
 
     if eqv_reg is not None:
         aug_op, aug_op_inv, para_aug = get_sampling_eqv_aug_pair(eqv_reg)
@@ -841,6 +871,7 @@ def sample_ddim(
             else:
                 pred_noise = denoiser(x_t=x, sigma=time*s_in, aug_data=aug_data)
             denoised = (x-th.sqrt(1-gamma_now)*pred_noise)/th.sqrt(gamma_now) 
+
         else:
             raise NotImplementedError(f"Error: pred_type={pred_type} is not currently supported.")  
 
