@@ -67,6 +67,11 @@ A typical launch command for training a model on the LYSTO (64x64x3 random crop)
 $ OPENAI_LOGDIR=/home/checkpoints/Group-Diffusion/lysto64 python train_fid.py --g_equiv True --g_input Z2_G --g_output D4_G --diff_type ddim --sampler ddim --self_cond True --data_augment 0 --eqv_reg D4 --pred_type x --attention_resolutions 32,16,8 --class_cond True --channel_mult 1,2,2,2 --use_scale_shift_norm True --dropout 0.1 --ema_rate 0.999,0.9999,0.9999432189950708 --global_batch_size 32 --image_size 64 --lr 0.0001 --num_channels 64 --num_head_channels 32 --num_res_blocks 1 --resblock_updown True --schedule_sampler lognormal --use_fp16 False --weight_decay 0.0 --weight_schedule karras --save_interval 1000 --sampling_interval 1000 --data_dir /home/datasets/lysto64_random_crop --ref_dir /home/datasets/lysto64_random_crop --sampling_dir /home/datasets/fid_samples --resume_checkpoint /home/checkpoints/Group-Diffusion/lysto64/
 ```
 
+Beyond using simple comamnd line arguments we also provide config files to more easily deal with all the model paramters. The config files are located in /model_config. To make use of a config files run the following bash command
+```
+$ ./scripts/launch_config.sh
+```
+
 
 ### Replicating results 
 The hyperparameters used to train the model(s) in the paper are covered in Appx.D.1. of the paper. Launch commands for various dataset are also included within /scripts/launch.sh.
@@ -76,8 +81,8 @@ Models in the paper were trained using 4x Nvidia A40s.
   + Models run on the LYSTO (64x64x3 random crop) dataset were trained for ~7-10days.
 
 
-## Atribution
-The given implementation(s) is initially based on the github repository of [Consistency Models](https://github.com/openai/consistency_models) as well as components from the [EDM](https://github.com/NVlabs/edm) repository and [k-diffusion](https://github.com/crowsonkb/k-diffusion).
+## Code atribution
+The given implementation(s) is initially based on the github repository of [Consistency Models](https://github.com/openai/consistency_models) as well as components from the [EDM](https://github.com/NVlabs/edm) repository and [k-diffusion](https://github.com/crowsonkb/k-diffusion). We also make use of a version of the [GrouPy library](https://github.com/tscohen/GrouPy) that we modified and updated to be compliant with the current (as of release) version of pytorch, following the work done by Adam Bielski, this version can be found at [GrouPy](https://github.com/ColdestCanadian/GrouPy); however, note this library was not directly used for any of the experiments in the paper.
 
 
 ## Citation
