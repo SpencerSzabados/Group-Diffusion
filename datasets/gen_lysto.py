@@ -19,7 +19,7 @@ from PIL import Image
 h5_data_dir = "/home/sszabados/datasets/lysto/"
 h5_dataset_name = "training.h5"
 label_dir = "/home/sszabados/datasets/lysto/"
-data_dir = "/home/sszabados/datasets/lysto64_random_crop/"
+data_dir = "/home/sszabados/datasets/lysto32_random_crop_ddbm_noise/"
 labels_name = "training_labels.csv"
 npy_dataset_name = "train_images.npy" 
 npy_labels_name = "train_labels.npy"
@@ -119,17 +119,16 @@ def gen_lysto_random_crop_npy(resolution=299, aug_mul=1):
     scaled_dataset = np.empty((org_dataset.shape[0]*aug_mul, resolution, resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
     scaled_labels = np.repeat(org_labels, aug_mul)
     for i in range(org_dataset.shape[0]):
-        for j in range(0,aug_mul):
-            image = Image.fromarray(org_dataset[i])
-
+        image = Image.fromarray(org_dataset[i])
+        for _ in range(0,aug_mul):
             # Calculate cropping parameters to randomly crop image
             width, height = image.size
             top_x = width-resolution
             top_y = height-resolution
             left = np.random.randint(0, top_x)
             top = np.random.randint(0, top_y)
-            right = left+width
-            bottom = top+height
+            right = left+resolution
+            bottom = top+resolution
 
             # Perform center crop
             img_cropped = image.crop((left, top, right, bottom))
@@ -137,6 +136,71 @@ def gen_lysto_random_crop_npy(resolution=299, aug_mul=1):
             # Resize the cropped image to the target size
             # img_resized = img_cropped.resize((resolution, resolution), Image.LANCZOS)
             scaled_dataset[i] = np.array(img_cropped)
+
+    np.save(data_dir+npy_labels_name, scaled_labels)
+    np.save(data_dir+npy_dataset_name, scaled_dataset) 
+
+
+def gen_ddbm_lysto_random_crop_npy(resolution=64, aug_mul=1, scale=0.5, sigma=10):
+    """
+    Script for generating paired {A,B} images used in training DDBM 
+    (https://github.com/kelvins/awesome-mlops?tab=readme-ov-file#data-management),
+    for the LYSTO dataset (https://zenodo.org/records/3513571).
+
+    :param resolution: integer value between 1<resolution<299 to scale images.
+    :param aug_mul: integer vaue, the number of random (crop) samples to create from each image.
+    :param sigma: float value, amount of blurring to do to an image for the low resolution pair {A,B}.
+    """
+    # Ensure the output directory exists
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
+    
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(data_dir+npy_dataset_name)
+    org_labels = np.load(label_dir+npy_labels_name)
+    # Create an empty array for downscaled images
+    scaled_dataset = np.empty((org_dataset.shape[0]*aug_mul, resolution, 2*resolution, org_dataset.shape[3]), dtype=org_dataset.dtype)
+    scaled_labels = np.repeat(org_labels, aug_mul)
+    for i in range(org_dataset.shape[0]):
+        for _ in range(0,aug_mul):
+            image = Image.fromarray(org_dataset[i])
+            # Calculate cropping parameters to randomly crop image
+            width, height = image.size
+            top_x = width-resolution
+            top_y = height-resolution
+            left = np.random.randint(0, top_x)
+            top = np.random.randint(0, top_y)
+            right = left+resolution
+            bottom = top+resolution
+
+            # Perform crop
+            img_cropped = image.crop((left, top, right, bottom))
+
+            # Generate low resolution (blurry) image pair
+            blur_resolution = int(resolution*scale)
+            blur_image = img_cropped.copy()
+            # add noise to image before scaling 
+            if sigma > 0:
+                blur_image = (np.array(blur_image).astype(np.float32)/127.5)-1.
+                noise = np.random.normal(0,sigma,blur_image.shape)
+                blur_image = ((np.clip(blur_image+noise, a_min=0, a_max=1)+1)*255).round().dtype(np.uint8)
+                blur_image = Image.fromarray(blur_image)
+            blur_image = blur_image.resize((blur_resolution,blur_resolution), Image.LANCZOS)
+            blur_image = blur_image.resize((resolution,resolution), Image.LANCZOS)
+
+            # Glue images together 
+            combined_image = Image.new("RGB", (2*resolution,resolution))
+            combined_image.paste(img_cropped, (resolution,0))
+            combined_image.paste(blur_image, (0,0))
+
+            # Resize the cropped image to the target size
+            # img_resized = img_cropped.resize((resolution, resolution), Image.LANCZOS)
+            scaled_dataset[i] = np.array(combined_image)
 
     np.save(data_dir+npy_labels_name, scaled_labels)
     np.save(data_dir+npy_dataset_name, scaled_dataset) 
@@ -153,9 +217,20 @@ def convert_npy_JPG():
         image.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
 
 
+def convert_npy_PNG():
+    # Load the .npy dataset
+    # Assuming 'dataset' is a 4D array with shape (num_images, height, width, channels)
+    org_dataset = np.load(str(data_dir)+str(npy_dataset_name))
+    labels = np.load(str(data_dir)+str(npy_organ_names))
+    # Create an empty array for downscaled images
+    for i in range(org_dataset.shape[0]):
+        image = Image.fromarray(org_dataset[i])
+        image.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.PNG"), format='PNG')
+
+
 def gen_lysto_JPG(resolution=299):
     """
-    Open lysto.npy dataset and downscale images to 128x128px from 299x299px.
+    Open lysto.npy dataset and downscale images to <resolution>x<resolution>px from 299x299px.
     Images are saved using the following naming convention <label_index.JPEG>
     as used for mnist data.
     """
@@ -200,7 +275,7 @@ def gen_lysto_center_crop_JPG(resolution=299):
         img_cropped.save(os.path.join(data_dir+"train_images", f"{labels[i]}_{i}.JPEG"))
 
 
-def gen_lysto_random_crop_JPG(resolution=299, aug_mul=1):
+def gen_lysto_random_crop_JPG(resolution=299, aug_mul=0):
     # Ensure the output directory exists
     os.makedirs(data_dir, exist_ok=True)
 
@@ -219,8 +294,8 @@ def gen_lysto_random_crop_JPG(resolution=299, aug_mul=1):
             top_y = height-resolution
             left = np.random.randint(0, top_x)
             top = np.random.randint(0, top_y)
-            right = left+width
-            bottom = top+height
+            right = left+resolution
+            bottom = top+resolution
 
             # Perform center crop
             img_cropped = image.crop((left, top, right, bottom))
@@ -267,6 +342,8 @@ def sample_lysto(num_samples=10, num_classes=3):
 
 if __name__=="__main__":
     convert_h5_npy()
-    gen_lysto_center_crop_npy(resolution=128)
-    convert_npy_JPG()
+    gen_lysto_npy(resolution=128)
+    gen_ddbm_lysto_random_crop_npy(resolution=32, aug_mul=1, scale=0.25, sigma=1)
+    # convert_npy_JPG()
+    convert_npy_PNG()
 
