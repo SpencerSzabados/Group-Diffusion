@@ -3,7 +3,7 @@
 This repository contains the implementation(s) for the model(s) proposed in [Structure Preserving Diffusion Models](https://arxiv.org/abs/2402.19369). 
 
 <p align="center">
-  <img src="assets/teaser.svg" width="100%"/>
+  <img src="assets/teaser.svg" width="60%"/>
 </p>
 
 ## Abstract 
