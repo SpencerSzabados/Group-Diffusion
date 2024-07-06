@@ -1,6 +1,6 @@
 
 # Structure Preserving Diffusion Models
-This repository contains the implementation(s) for the model proposed in (TODO: add link). 
+This repository contains the implementation(s) for the model proposed in [Structure Preserving Diffusion Models](https://arxiv.org/abs/2402.19369). 
 
 ## Abstract 
 Diffusion models have become the leading distribution-learning method in recent years. Herein, we introduce structure-preserving diffusion processes, a family of diffusion processes for learning distributions that possess additional structure, such as group symmetry, by developing theoretical conditions under which the diffusion transition steps preserve said symmetry. While also enabling equivariant data sampling trajectories, we exemplify these results by developing a collection of different symmetry equivariant diffusion models capable of learning distributions that are inherently symmetric. Empirical studies, over both synthetic and real-world datasets, are used to validate the developed models adhere to the proposed theory and are capable of achieving improved performance over existing methods in terms of sample equality. We also show how the proposed models can be used to achieve theoretically guaranteed equivariant image noise reduction without prior knowledge of the image orientation.
@@ -86,4 +86,11 @@ The given implementation(s) is initially based on the github repository of [Cons
 
 
 ## Citation
-TODO: add when accepted.
+```bibtex
+@unpublished{LuSY:2024,
+    author = {Lu, Haoye and Szabados, Spencer and Yu, Yaoliang},
+    title = {Structure Preserving Diffusion Models}, 
+    year = {2024},
+    url = {https://arxiv.org/abs/2402.19369}, 
+}
+```
