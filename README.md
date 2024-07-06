@@ -86,7 +86,7 @@ Models in the paper were trained using 4x Nvidia A40s.
   + Models run on the LYSTO (64x64x3 random crop) dataset were trained for ~7-10days.
 
 
-# Code atribution
+# Code attribution
 The given implementation(s) is initially based on the github repository of [Consistency Models](https://github.com/openai/consistency_models) as well as components from the [EDM](https://github.com/NVlabs/edm) repository and [k-diffusion](https://github.com/crowsonkb/k-diffusion). We also make use of a version of the [GrouPy library](https://github.com/tscohen/GrouPy) that we modified and updated to be compliant with the current (as of release) version of pytorch, following the work done by Adam Bielski, this version can be found at [GrouPy](https://github.com/ColdestCanadian/GrouPy); however, note this library was not directly used for any of the experiments in the paper.
 
 
