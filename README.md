@@ -1,22 +1,27 @@
 
 # Structure Preserving Diffusion Models
-This repository contains the implementation(s) for the model proposed in [Structure Preserving Diffusion Models](https://arxiv.org/abs/2402.19369). 
+This repository contains the implementation(s) for the model(s) proposed in [Structure Preserving Diffusion Models](https://arxiv.org/abs/2402.19369). 
+
+<p align="center">
+  <img src="assets/teaser.svg" width="100%"/>
+</p>
 
 ## Abstract 
 Diffusion models have become the leading distribution-learning method in recent years. Herein, we introduce structure-preserving diffusion processes, a family of diffusion processes for learning distributions that possess additional structure, such as group symmetry, by developing theoretical conditions under which the diffusion transition steps preserve said symmetry. While also enabling equivariant data sampling trajectories, we exemplify these results by developing a collection of different symmetry equivariant diffusion models capable of learning distributions that are inherently symmetric. Empirical studies, over both synthetic and real-world datasets, are used to validate the developed models adhere to the proposed theory and are capable of achieving improved performance over existing methods in terms of sample equality. We also show how the proposed models can be used to achieve theoretically guaranteed equivariant image noise reduction without prior knowledge of the image orientation.
 
 
-## Useage
-### Environment setup 
-We include a [Docker](https://www.docker.com/) buildfile in /Group-Diffusion/docker that builds a sutable environment for running all the code by simply running the following docker command (which is also found in /Group-Diffusion/docker/run_container.sh). 
-This docker image should download the latest version of the diffusion model code from this repository.
+# Useage
+## Environment setup 
+We include a [Docker](https://www.docker.com/) buildfile in '/Group-Diffusion/docker' that builds a sutable environment for running all the code by simply running the following docker command (which is also found in '/Group-Diffusion/docker/run_container.sh'). This docker image should download the latest version of the diffusion model code from this repository.
 
 ```
 $ docker build -t group-diffusion:latest /Group-Diffusion/docker/Dockerfile 
 ```
+You may also use [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html), for which you can build the environment using the 'steup.py' file; however, package conflicts are more likely to occur if using conda.
 
-### General useage
-#### Dataset generation and loading
+
+## General useage
+### Dataset generation and loading
 The /datasets/ directory contains scripts for generating/downloading various image datasets.
 
 As an example, the MNIST dataset can be downloaded -- to the directoy specified within the given scrip.py -- by running the following command:
@@ -24,7 +29,7 @@ As an example, the MNIST dataset can be downloaded -- to the directoy specified 
 $ python gen_mnist.py
 ```
 
-#### Training models
+### Training models
 The provided model accepts a variety of different launch options: 
 ```
   --g_equiv {True, False}, 
@@ -81,11 +86,11 @@ Models in the paper were trained using 4x Nvidia A40s.
   + Models run on the LYSTO (64x64x3 random crop) dataset were trained for ~7-10days.
 
 
-## Code atribution
+# Code atribution
 The given implementation(s) is initially based on the github repository of [Consistency Models](https://github.com/openai/consistency_models) as well as components from the [EDM](https://github.com/NVlabs/edm) repository and [k-diffusion](https://github.com/crowsonkb/k-diffusion). We also make use of a version of the [GrouPy library](https://github.com/tscohen/GrouPy) that we modified and updated to be compliant with the current (as of release) version of pytorch, following the work done by Adam Bielski, this version can be found at [GrouPy](https://github.com/ColdestCanadian/GrouPy); however, note this library was not directly used for any of the experiments in the paper.
 
 
-## Citation
+# Citation
 ```bibtex
 @unpublished{LuSY:2024,
     author = {Lu, Haoye and Szabados, Spencer and Yu, Yaoliang},
