@@ -20,7 +20,7 @@ $ docker build -t group-diffusion:latest /Group-Diffusion/docker/Dockerfile
 You may also use [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html), for which you can build the environment using the 'steup.py' file; however, package conflicts are more likely to occur if using conda.
 
 
-## General useage
+## General usage
 ### Dataset generation and loading
 The /datasets/ directory contains scripts for generating/downloading various image datasets.
 
