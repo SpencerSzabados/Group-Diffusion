@@ -2,7 +2,7 @@
     Script for training a mlp diffusion model on point data.
 
     Example launch command:
-    CUDA_VISIBLE_DEVICES=0 OPENAI_LOGDIR=/u6/sszabado/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py 
+    CUDA_VISIBLE_DEVICES=0 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C4
 """
 
 import os
@@ -51,7 +51,7 @@ def add_dict_to_argparser(parser, default_dict):
 def create_argparser():
     defaults = dict(
         experiment_name="mlp",
-        data_dir="/u6/sszabado/datasets/checkerboard/radial_checkerboard_density_dataset.npz",
+        data_dir="/home/sszabados/datasets/checkerboard/radial_checkerboard_density_dataset.npz",
         g_equiv=False,
         g_input=None,
         diff_type='pfode',
@@ -97,11 +97,22 @@ def rot_fn(points, k):
     Returns:
         torch.Tensor: The rotated points.
     """
-    # Reshape the points into the form (batch_size, 1, 2) so that torch.rot90 can work
-    points = points.unsqueeze(1)
-    rotated_points = th.rot90(points, k=k, dims=(1, 2))
-    # Return the points reshaped back to (batch_size, 2)
-    return rotated_points.squeeze(1)
+     # Ensure k is between 0 and 3 (for multiples of 90 degrees)
+    k = k % 4
+    
+    # Rotation matrices for 90-degree increments
+    if k == 1:  # 90 degrees counterclockwise
+        rotation_matrix = th.tensor([[0, -1], [1, 0]], dtype=points.dtype, device=points.device)
+    elif k == 2:  # 180 degrees
+        rotation_matrix = th.tensor([[-1, 0], [0, -1]], dtype=points.dtype, device=points.device)
+    elif k == 3:  # 270 degrees counterclockwise (or 90 degrees clockwise)
+        rotation_matrix = th.tensor([[0, 1], [-1, 0]], dtype=points.dtype, device=points.device)
+    else:  # k == 0, no rotation
+        return points
+    
+    # Apply the rotation matrix to the batch of points
+    return th.matmul(points, rotation_matrix)
+
 
 def inv_rot_fn(points, k):
     """
@@ -113,11 +124,8 @@ def inv_rot_fn(points, k):
     Returns:
         torch.Tensor: The points rotated backward by k * 90 degrees.
     """
-    # Reshape the points into the form (batch_size, 1, 2)
-    points = points.unsqueeze(1)
-    rotated_points = th.rot90(points, k=-k, dims=(1, 2))
-    # Return the points reshaped back to (batch_size, 2)
-    return rotated_points.squeeze(1)
+    # Inverse rotation is equivalent to rotating in the opposite direction by (4 - k) * 90 degrees
+    return rot_fn(points, -k)
     
 
 def update_ema(model, ema_model, ema):
