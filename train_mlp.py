@@ -96,6 +96,7 @@ def main():
 
     outdir = f"exps/{args.experiment_name}"
     os.makedirs(outdir, exist_ok=True)
+    os.makedirs(f"{outdir}/images/", exist_ok=True)
 
     distribute_util.setup_dist()
     logger.configure()

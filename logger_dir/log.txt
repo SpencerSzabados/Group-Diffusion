@@ -1,9 +1,13 @@
 Logging to /u6/sszabado/models/Group-Diffusion/logger_dir
+[2024-09-12 15:04:48]====================
+Job started.
+Experiment: mlp
+
 creating model and noise scheduler...
 creating data loader...
-[2024-09-12 14:42:43]====================
+[2024-09-12 15:04:48]====================
 Training model...
 
-[2024-09-12 14:44:44]--------------------
+[2024-09-12 15:06:53]--------------------
 Step: 2000
-Loss: 0.5332087874412537
+Loss: 0.5251488089561462
