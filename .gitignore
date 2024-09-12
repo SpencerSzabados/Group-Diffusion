@@ -6,6 +6,7 @@ reference_code/
 *~
 *.JPEG
 *.pdf
+*.png
 tmp*
 /tmp*
 tmp_imgs/

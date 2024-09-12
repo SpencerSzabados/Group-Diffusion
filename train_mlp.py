@@ -13,16 +13,16 @@ from model.utils.point_dataset_loader import load_data
 from model.mlp import MLP
 from model.mlp_diffusion import NoiseScheduler
 
-from model import logger
-from datetime import datetime
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import tqdm
+from copy import deepcopy
 
+from tqdm import tqdm
+from model import logger
+from datetime import datetime
 
 def str2bool(v):
     """
@@ -67,6 +67,7 @@ def create_argparser():
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
+        ema=0.994,
         lr_anneal_steps=0,
         global_batch_size=10000,
         global_sample_size=10000,
@@ -84,6 +85,57 @@ def create_argparser():
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     return parser
+
+
+def rot_fn(points, k):
+    """
+    Rotates a batch of [x, y] points around (0, 0) by k * 90 degrees.
+
+    Parameters:
+        points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
+    
+    Returns:
+        torch.Tensor: The rotated points.
+    """
+    # Reshape the points into the form (batch_size, 1, 2) so that torch.rot90 can work
+    points = points.unsqueeze(1)
+    rotated_points = th.rot90(points, k=k, dims=(1, 2))
+    # Return the points reshaped back to (batch_size, 2)
+    return rotated_points.squeeze(1)
+
+def inv_rot_fn(points, k):
+    """
+    Rotates a batch of [x, y] points around (0, 0) by -k * 90 degrees (inverse of the rotation).
+
+    Parameters:
+        points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
+    
+    Returns:
+        torch.Tensor: The points rotated backward by k * 90 degrees.
+    """
+    # Reshape the points into the form (batch_size, 1, 2)
+    points = points.unsqueeze(1)
+    rotated_points = th.rot90(points, k=-k, dims=(1, 2))
+    # Return the points reshaped back to (batch_size, 2)
+    return rotated_points.squeeze(1)
+    
+
+def update_ema(model, ema_model, ema):
+    """
+    Updates model weights using exponential moving average.
+
+    Paramters:
+        model (nn.Module): Current model being trained
+        ema_model (nn.Module): No gradient copy of model
+        ema (th.Tensor): EMA decay value
+
+    """
+    with th.no_grad():
+        model_params = list(model.parameters())
+        ema_params = list(ema_model.parameters())
+        
+        for model_param, ema_param in zip(model_params, ema_params):
+            ema_param.data.mul_(ema).add_(model_param.data, alpha=(1 - ema))
 
 
 def main():
@@ -133,8 +185,15 @@ def main():
         batch_size=batch_size,
     )
 
-    optimizer = th.optim.AdamW(model.parameters(),
-                               lr=args.lr)
+    # Set up the optimizer
+    optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
+
+    # Create a deepcopy of the model to store the EMA weights
+    ema_model = deepcopy(model)
+
+    # Disable gradient tracking for the EMA model
+    for param in ema_model.parameters():
+        param.requires_grad = False
 
     global_step = 0
     frames = []
@@ -156,17 +215,38 @@ def main():
             noisy = noisy.to(distribute_util.dev())
             timesteps = timesteps.to(distribute_util.dev())
 
+            # Compute loss
+            optimizer.zero_grad()
             if args.pred_type == 'eps':
-                noise_pred = model(noisy, timesteps)
-                loss = F.mse_loss(noise_pred, noise)
+                if args.g_equiv and args.g_input == "C4":
+                    loss = 0
+                    for k in range(0,4):
+                        noisy_rot = rot_fn(noisy, k)
+                        noise_pred = inv_rot_fn(model(noisy_rot, timesteps), k)
+                        loss += F.mse_loss(noise_pred, noise)
+                    loss = loss/4.0
+                else:
+                    noise_pred = model(noisy, timesteps)
+                    loss = F.mse_loss(noise_pred, noise)
             elif args.pred_type == "x":
-                x_pred = model(noisy, timesteps)
-                loss = F.mse_loss(x_pred, batch)
+                if args.g_equiv and args.g_input == "C4":
+                    loss = 0
+                    for k in range(0,4):
+                        noisy_rot = rot_fn(noisy, k)
+                        x_pred = inv_rot_fn(model(noisy_rot, timesteps), k)
+                        loss += F.mse_loss(x_pred, batch)
+                    loss = loss/4.0
+                else:
+                    x_pred = model(noisy, timesteps)
+                    loss = F.mse_loss(x_pred, batch)
             loss.backward()
 
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # nn.utils.clip_grad_norm_(model.parameters(), 1.0) # TODO: removed this line to speed up convergence.
             optimizer.step()
-            optimizer.zero_grad()
+            
+            if args.ema > 0:
+                # Update the EMA model after the optimizer step
+                update_ema(model, ema_model, args.ema)
 
             global_step += 1
 
@@ -199,7 +279,6 @@ def main():
                     plt.axis('off')
                     plt.savefig(f"{outdir}/images/sample_{global_step}.png")
                     plt.close()
-
                 model.train()
 
             if global_step % args.save_interval == 0 and global_step > 0:
