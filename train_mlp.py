@@ -2,7 +2,7 @@
     Script for training a mlp diffusion model on point data.
 
     Example launch command:
-    CUDA_VISIBLE_DEVICES=0 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C4
+    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C4
 """
 
 import os
@@ -87,45 +87,33 @@ def create_argparser():
     return parser
 
 
-def rot_fn(points, k):
+def rot_fn(points, angle, k):
     """
-    Rotates a batch of [x, y] points around (0, 0) by k * 90 degrees.
+    Rotates a batch of [x, y] points around (0, 0) by k*angle.
 
     Parameters:
         points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
-    
-    Returns:
-        torch.Tensor: The rotated points.
+
     """
-     # Ensure k is between 0 and 3 (for multiples of 90 degrees)
-    k = k % 4
-    
-    # Rotation matrices for 90-degree increments
-    if k == 1:  # 90 degrees counterclockwise
-        rotation_matrix = th.tensor([[0, -1], [1, 0]], dtype=points.dtype, device=points.device)
-    elif k == 2:  # 180 degrees
-        rotation_matrix = th.tensor([[-1, 0], [0, -1]], dtype=points.dtype, device=points.device)
-    elif k == 3:  # 270 degrees counterclockwise (or 90 degrees clockwise)
-        rotation_matrix = th.tensor([[0, 1], [-1, 0]], dtype=points.dtype, device=points.device)
-    else:  # k == 0, no rotation
-        return points
+    # Compute the rotation matrix
+    cos_angle = np.cos(k*angle)
+    sin_angle = np.sin(k*angle)
+    rotation_matrix = th.tensor([[cos_angle, -sin_angle], [sin_angle, cos_angle]], dtype=points.dtype, device=points.device)
     
     # Apply the rotation matrix to the batch of points
     return th.matmul(points, rotation_matrix)
 
 
-def inv_rot_fn(points, k):
+def inv_rot_fn(points, angle, k):
     """
-    Rotates a batch of [x, y] points around (0, 0) by -k * 90 degrees (inverse of the rotation).
+    Rotates a batch of [x, y] points around (0, 0) by -k*angle (inverse of the rotation).
 
     Parameters:
         points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
-    
-    Returns:
-        torch.Tensor: The points rotated backward by k * 90 degrees.
+
     """
     # Inverse rotation is equivalent to rotating in the opposite direction by (4 - k) * 90 degrees
-    return rot_fn(points, -k)
+    return rot_fn(points, angle, -k)
     
 
 def update_ema(model, ema_model, ema):
@@ -226,24 +214,24 @@ def main():
             # Compute loss
             optimizer.zero_grad()
             if args.pred_type == 'eps':
-                if args.g_equiv and args.g_input == "C4":
+                if args.g_equiv and args.g_input == "C5":
                     loss = 0
-                    for k in range(0,4):
-                        noisy_rot = rot_fn(noisy, k)
-                        noise_pred = inv_rot_fn(model(noisy_rot, timesteps), k)
+                    for k in range(0,5):
+                        noisy_rot = rot_fn(noisy, 2*th.pi/5.0, k)
+                        noise_pred = inv_rot_fn(model(noisy_rot, timesteps), 2*th.pi/5.0, k)
                         loss += F.mse_loss(noise_pred, noise)
-                    loss = loss/4.0
+                    loss = loss/5.0
                 else:
                     noise_pred = model(noisy, timesteps)
                     loss = F.mse_loss(noise_pred, noise)
             elif args.pred_type == "x":
-                if args.g_equiv and args.g_input == "C4":
+                if args.g_equiv and args.g_input == "C5":
                     loss = 0
-                    for k in range(0,4):
-                        noisy_rot = rot_fn(noisy, k)
-                        x_pred = inv_rot_fn(model(noisy_rot, timesteps), k)
+                    for k in range(0,5):
+                        noisy_rot = rot_fn(noisy, 2*th.pi/5.0, k)
+                        x_pred = inv_rot_fn(model(noisy_rot, timesteps), 2*th.pi/5.0, k)
                         loss += F.mse_loss(x_pred, batch)
-                    loss = loss/4.0
+                    loss = loss/5.0
                 else:
                     x_pred = model(noisy, timesteps)
                     loss = F.mse_loss(x_pred, batch)
