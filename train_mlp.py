@@ -2,7 +2,8 @@
     Script for training a mlp diffusion model on point data.
 
     Example launch command:
-    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C4
+    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp
+    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C5
 """
 
 import os
@@ -70,11 +71,11 @@ def create_argparser():
         ema=0.994,
         lr_anneal_steps=0,
         global_batch_size=10000,
-        global_sample_size=10000,
+        global_sample_size=100000,
         batch_size=-1,
         log_interval=2000,
-        sample_interval=10000,
-        save_interval=1000000,
+        sample_interval=20000,
+        save_interval=100000,
         training_steps=1000000,
         resume_checkpoint="",
         use_fp16=False,
@@ -273,7 +274,7 @@ def main():
                     plt.figure(figsize=(8, 8))
                     plt.scatter(frame[:, 0], frame[:, 1], alpha=0.5, s=1)
                     plt.axis('off')
-                    plt.savefig(f"{outdir}/images/sample_{global_step}.png")
+                    plt.savefig(f"{outdir}/images/sample_{global_step}.png", transparent=True)
                     plt.close()
                 model.train()
 
