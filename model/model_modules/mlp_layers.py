@@ -8,6 +8,48 @@
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+
+
+def rot_fn(points, angle, k):
+    """
+    Rotates a batch of [x, y] points around (0, 0) by k*angle. This is used to perform frame 
+    averaging for the C_{k*angle} group during training to condition the model to be invariant. 
+
+    Parameters:
+        points (torch.Tensor): A tensor of shape [batch_size, 2] containing [x, y] points.
+        angle (torch.float): The base angle in radians that everything will be rotated by.
+        k (Int): Rotation multiplier.
+
+    Retruns: 
+        (torch.Tensor): batch of points [batch_size, 2] rotated around (0,0) by k*angle.
+    """
+    # Compute the rotation matrix
+    cos_angle = np.cos(k*angle)
+    sin_angle = np.sin(k*angle)
+    rotation_matrix = th.tensor([[cos_angle, -sin_angle], [sin_angle, cos_angle]], dtype=points.dtype, device=points.device)
+    
+    # Apply the rotation matrix to the batch of points
+    return th.matmul(points, rotation_matrix)
+
+
+def inv_rot_fn(points, angle, k):
+    """
+    Rotates a batch of [x, y] points around (0, 0) by -k*angle (inverse of the rotation).
+    This is used to rever the operation of rot_fn during the frame averaging computation 
+    for the C_{k*angle} group during training to condition the model to be invariant. 
+
+    Parameters:
+        points (torch.Tensor): A tensor of shape [batch_size, 2] containing [x, y] points.
+        angle (torch.float): The base angle in radians that everything will be rotated by.
+        k (Int): Rotation multiplier.
+
+    Retruns: 
+        (torch.Tensor): batch of points [batch_size, 2] rotated around (0,0) by -k*angle.
+    """
+    # Inverse rotation is equivalent to rotating in the opposite direction by (4 - k) * 90 degrees
+    return rot_fn(points, angle, -k)
+    
 
 
 class SinusoidalEmbedding(nn.Module):

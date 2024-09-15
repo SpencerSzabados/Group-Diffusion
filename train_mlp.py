@@ -10,9 +10,6 @@ import os
 import argparse
 from model.utils import distribute_util
 import torch.distributed as dist
-from model.utils.point_dataset_loader import load_data
-from model.mlp import MLP
-from model.mlp_diffusion import NoiseScheduler
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,9 +18,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
 
+from model.utils.point_dataset_loader import load_data
+from model.mlp import MLP
+from model.mlp_diffusion import NoiseScheduler
+from model.model_modules.mlp_layers import rot_fn, inv_rot_fn
+
 from tqdm import tqdm
 from model import logger
 from datetime import datetime
+
 
 def str2bool(v):
     """
@@ -87,35 +90,6 @@ def create_argparser():
     add_dict_to_argparser(parser, defaults)
     return parser
 
-
-def rot_fn(points, angle, k):
-    """
-    Rotates a batch of [x, y] points around (0, 0) by k*angle.
-
-    Parameters:
-        points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
-
-    """
-    # Compute the rotation matrix
-    cos_angle = np.cos(k*angle)
-    sin_angle = np.sin(k*angle)
-    rotation_matrix = th.tensor([[cos_angle, -sin_angle], [sin_angle, cos_angle]], dtype=points.dtype, device=points.device)
-    
-    # Apply the rotation matrix to the batch of points
-    return th.matmul(points, rotation_matrix)
-
-
-def inv_rot_fn(points, angle, k):
-    """
-    Rotates a batch of [x, y] points around (0, 0) by -k*angle (inverse of the rotation).
-
-    Parameters:
-        points (torch.Tensor): A tensor of shape (batch_size, 2) containing [x, y] points.
-
-    """
-    # Inverse rotation is equivalent to rotating in the opposite direction by (4 - k) * 90 degrees
-    return rot_fn(points, angle, -k)
-    
 
 def update_ema(model, ema_model, ema):
     """
@@ -281,26 +255,6 @@ def main():
             if global_step % args.save_interval == 0 and global_step > 0:
                 logger.log("Saving model...")
                 th.save(model.state_dict(), f"{outdir}/model_{global_step}.pth")
-
-    # print("Saving images...")
-    # imgdir = f"{outdir}/images"
-    # os.makedirs(imgdir, exist_ok=True)
-    # frames = np.stack(frames)
-    # xmin, xmax = -6, 6
-    # ymin, ymax = -6, 6
-    # for i, frame in enumerate(frames):
-    #     plt.figure(figsize=(10, 10))
-    #     plt.scatter(frame[:, 0], frame[:, 1])
-    #     plt.xlim(xmin, xmax)
-    #     plt.ylim(ymin, ymax)
-    #     plt.savefig(f"{imgdir}/{i:04}.png")
-    #     plt.close()
-
-    print("Saving loss as numpy array...")
-    np.save(f"{outdir}/loss.npy", np.array(losses))
-
-    print("Saving frames...")
-    np.save(f"{outdir}/frames.npy", frames)
 
 
 if __name__ == "__main__":
