@@ -9,7 +9,12 @@ import torch.nn.functional as F
 
 
 class NoiseScheduler():
+    """
+    Noise scheduler for MLP diffusion model. Constructs noise cdf based on given paramters 
+    for the ddpm discrete diffusion setting. 
+    """
     def __init__(self,
+                 diff_type="ddpm",
                  num_timesteps=1000,
                  beta_start=0.0001,
                  beta_end=0.02,
@@ -43,30 +48,45 @@ class NoiseScheduler():
         self.posterior_mean_coef2 = (1. - self.alphas_cumprod_prev) * th.sqrt(self.alphas) / (1. - self.alphas_cumprod)
 
     def reconstruct_x0(self, x_t, t, noise):
+        assert(x_t.device == noise.device)
+
         s1 = self.sqrt_inv_alphas_cumprod[t]
         s2 = self.sqrt_inv_alphas_cumprod_minus_one[t]
         s1 = s1.reshape(-1, 1).to(device=x_t.device)
         s2 = s2.reshape(-1, 1).to(device=x_t.device)
+
         return s1 * x_t - s2 * noise
 
     def q_posterior(self, x_0, x_t, t):
+        assert(x_0.device == x_t.device)
+
         s1 = self.posterior_mean_coef1[t]
         s2 = self.posterior_mean_coef2[t]
         s1 = s1.reshape(-1, 1).to(device=x_t.device)
         s2 = s2.reshape(-1, 1).to(device=x_t.device)
         mu = s1 * x_0 + s2 * x_t
+
         return mu
 
     def get_variance(self, t):
         if t == 0:
-            return 0
-
-        variance = self.betas[t] * (1. - self.alphas_cumprod_prev[t]) / (1. - self.alphas_cumprod[t])
+            variance = th.tensor(1e-20, dtype=th.float32)
+        else:
+            variance = self.betas[t] * (1. - self.alphas_cumprod_prev[t]) / (1. - self.alphas_cumprod[t])
         variance = variance.clip(1e-20)
-        return variance
 
-    def step(self, model_output, timestep, sample):
-        t = timestep
+        return variance
+    
+    def get_score_from_noise(self, pred_noise, t):
+        padding = th.ones_like(pred_noise).to(device=pred_noise.device)
+        sigmas = (self.get_variance(t)**0.5)*padding
+        pred_score = -pred_noise/sigmas
+
+        return pred_score
+
+    def step(self, model_output, t, sample):
+        assert(model_output.device == sample.device)
+
         pred_original_sample = self.reconstruct_x0(sample, t, model_output)
         pred_prev_sample = self.q_posterior(pred_original_sample, sample, t)
 
@@ -79,9 +99,11 @@ class NoiseScheduler():
 
         return pred_prev_sample
 
-    def add_noise(self, x_start, x_noise, timesteps):
-        s1 = self.sqrt_alphas_cumprod[timesteps]
-        s2 = self.sqrt_one_minus_alphas_cumprod[timesteps]
+    def add_noise(self, x_start, x_noise, t):
+        assert(x_start.device == x_noise.device)
+
+        s1 = self.sqrt_alphas_cumprod[t]
+        s2 = self.sqrt_one_minus_alphas_cumprod[t]
 
         s1 = s1.reshape(-1, 1)
         s2 = s2.reshape(-1, 1)

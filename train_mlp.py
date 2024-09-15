@@ -2,8 +2,7 @@
     Script for training a mlp diffusion model on point data.
 
     Example launch command:
-    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp
-    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/logger_dir NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_fa --g_equiv True --g_input C5
+    CUDA_VISIBLE_DEVICES=1 OPENAI_LOGDIR=/home/sszabados/models/Group-Diffusion/exps/mlp_ism NCCL_P2P_LEVEL=NVL mpiexec -n 1 python train_mlp.py --experiment_name mlp_ism --data_dir /home/sszabados/datasets/checkerboard/radial_checkerboard_density_dataset.npz --g_equiv False --loss ism
 """
 
 import os
@@ -55,18 +54,19 @@ def add_dict_to_argparser(parser, default_dict):
 def create_argparser():
     defaults = dict(
         experiment_name="mlp",
-        data_dir="/home/sszabados/datasets/checkerboard/radial_checkerboard_density_dataset.npz",
-        g_equiv=False,
-        g_input=None,
-        diff_type='pfode',
-        pred_type='eps',
-        eqv_reg=None,
+        data_dir="",
+        g_equiv=False,     # False, True
+        g_input=None,      # None, C5
+        eqv_reg=False,     # False, True 
+        loss="dsm",        # dsm, ism
+        diff_type='pfode', # pfode, ddpm, ref
+        pred_type='eps',   # epx, x
         hidden_layers=3,
         hidden_size=128,
         emb_size=128,
         time_emb="sinusoidal",
         input_emb="sinusoidal",
-        num_timesteps=80,
+        num_timesteps=50,
         beta_schedule="linear",
         schedule_sampler="uniform",
         lr=1e-4,
@@ -99,7 +99,6 @@ def update_ema(model, ema_model, ema):
         model (nn.Module): Current model being trained
         ema_model (nn.Module): No gradient copy of model
         ema (th.Tensor): EMA decay value
-
     """
     with th.no_grad():
         model_params = list(model.parameters())
@@ -109,7 +108,117 @@ def update_ema(model, ema_model, ema):
             ema_param.data.mul_(ema).add_(model_param.data, alpha=(1 - ema))
 
 
+def hutchinson_divergence(model, noisy, timesteps, noise_scheduler, num_samples=10):
+    """
+    Estimates the divergence term using Hutchinson's estimator.
+    
+    Params:
+        model (Class): The model that predicts noise (which is then converted to score).
+        noisy (th.Tensor): The noisy inputs at timestep t.
+        timesteps (th.Tensor): The time value associated with the noisy inputs.
+        noise_scheduler (Class): The noise scheduler used to convert predicted noise to score.
+        num_samples (Int): Number of Gussian samples to used in estimating divergence.
+    Returns:
+        divergence_term: The estimated divergence term.
+    """
+    divergence = 0
+    for _ in range(num_samples):
+        # Sample random noise for Hutchinson's estimator
+        z = th.randn_like(noisy)
+        # Predict the noise (epsilon) using the model
+        pred_noise = model(noisy, timesteps)
+        # Convert predicted noise to score using the noise scheduler
+        pred_score = noise_scheduler.get_score_from_noise(pred_noise, timesteps[0])
+        # Compute the gradient of the predicted score w.r.t. the noisy input
+        grad_pred_score = th.autograd.grad(
+                                outputs=pred_score, 
+                                inputs=noisy, 
+                                grad_outputs=z, 
+                                create_graph=True, 
+                                retain_graph=True
+                            )[0]
+        
+        # Compute the Hutchinson divergence estimate
+        divergence += (grad_pred_score * z).sum(dim=1).mean()
+    
+    return divergence/num_samples
+
+
+# Function to return either mse_loss or the implicit score matching loss
+def get_loss_fn(args, model, noise_scheduler):
+    """
+    Retruns an anonymous loss function based on selected args.
+
+    Params:
+        args (dict): Dictionary list of launch paramters .
+        model (Class): Model to be trained.
+        noise_scheduler (Class): The noise scheduler used to convert predicted noise to score.
+    Returns:
+        loss_fn (Function): Function that computes the forwards loss.
+    """
+    if args.loss == 'ism':
+        if args.pred_type == "eps":
+            def loss_fn(noisy, timesteps, noise, batch):
+                # Ensure noisy requires gradient for autograd to compute the divergence
+                noisy.requires_grad_(True)
+                pred_noise = model(noisy, timesteps)
+                pred_score = noise_scheduler.get_score_from_noise(pred_noise, timesteps[0])
+                # 1/2 ||s_theta(x)||_2^2 (regularization term)
+                norm_term = 0.5 * th.sum(pred_score**2, dim=1).mean()
+                # div(s_theta(x)) (Hutchinson divergence estimator)
+                divergence_term = hutchinson_divergence(model, noisy, timesteps, noise_scheduler)
+                # Total ISM loss
+                return norm_term + divergence_term
+            return loss_fn
+
+    elif args.loss == "dsm":
+        # Define the loss function based on g_equiv and pred_type
+        if args.pred_type == 'eps':
+            if args.g_equiv and args.g_input == "C5":
+                # Precompute the logic for rotational MSE loss for 'eps'
+                def loss_fn(noisy, timesteps, noise, batch):
+                    loss = 0
+                    for k in range(5):
+                        noisy_rot = rot_fn(noisy, 2 * th.pi / 5.0, k)
+                        noise_pred = inv_rot_fn(model(noisy_rot, timesteps), 2 * th.pi / 5.0, k)
+                        loss += F.mse_loss(noise_pred, noise)
+                    return loss / 5.0  # Average over the 5 rotations
+            else:
+                # Standard MSE loss for 'eps'
+                def loss_fn(noisy, timesteps, noise, batch):
+                    noise_pred = model(noisy, timesteps)
+                    return F.mse_loss(noise_pred, noise)
+
+        elif args.pred_type == 'x':
+            if args.g_equiv and args.g_input == "C5":
+                # Precompute the logic for rotational MSE loss for 'x'
+                def loss_fn(noisy, timesteps, noise, batch):
+                    loss = 0
+                    for k in range(5):
+                        noisy_rot = rot_fn(noisy, 2 * th.pi / 5.0, k)
+                        x_pred = inv_rot_fn(model(noisy_rot, timesteps), 2 * th.pi / 5.0, k)
+                        loss += F.mse_loss(x_pred, batch)
+                    return loss / 5.0  # Average over the 5 rotations
+            else:
+                # Standard MSE loss for 'x'
+                def loss_fn(noisy, timesteps, noise, batch):
+                    x_pred = model(noisy, timesteps)
+                    return F.mse_loss(x_pred, batch)
+                
+        else:
+            raise NotImplementedError(f"The option {args.loss} is not supported.")
+
+        return loss_fn
+    
+
 def main():
+    """
+    Model initilization and training loop.
+
+    Params:
+        Args (Dict): Launch options are configured using create_argparser object which
+            returns a dict of all configurable command line launch options.
+    """
     args = create_argparser().parse_args()
 
     # print(args.user_id, args.slurm_id)
@@ -128,7 +237,7 @@ def main():
     logger.log(f"[{time}]"+"="*20+"\nJob started.")
     logger.log(f"Experiment: {args.experiment_name}\n")
 
-    logger.log("creating model and noise scheduler...")
+    logger.log("Creating model and noise scheduler...")
     model = MLP(hidden_layers=args.hidden_layers, 
                 hidden_size=args.hidden_size,
                 emb_size=args.emb_size,
@@ -140,7 +249,7 @@ def main():
 
     model = model.to(distribute_util.dev())
 
-    logger.log("creating data loader...")
+    logger.log("Creating data loader...")
     if args.batch_size == -1:
         batch_size = args.global_batch_size // dist.get_world_size()
         sample_size = args.global_sample_size // dist.get_world_size()
@@ -151,24 +260,21 @@ def main():
     else:
         batch_size = args.batch_size
 
-    dataloader, dataset = load_data(
-        data_dir=args.data_dir,
-        batch_size=batch_size,
-    )
+    dataloader, dataset = load_data(data_dir=args.data_dir, batch_size=batch_size)
+
+    # Get the loss function (ISM or MSE) based on args.loss
+    loss_fn = get_loss_fn(args, model, noise_scheduler)
 
     # Set up the optimizer
     optimizer = th.optim.AdamW(model.parameters(), lr=args.lr)
 
     # Create a deepcopy of the model to store the EMA weights
     ema_model = deepcopy(model)
-
     # Disable gradient tracking for the EMA model
     for param in ema_model.parameters():
         param.requires_grad = False
 
     global_step = 0
-    frames = []
-    losses = []
 
     time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.log(f"[{time}]"+"="*20+"\nTraining model...\n")
@@ -188,30 +294,9 @@ def main():
 
             # Compute loss
             optimizer.zero_grad()
-            if args.pred_type == 'eps':
-                if args.g_equiv and args.g_input == "C5":
-                    loss = 0
-                    for k in range(0,5):
-                        noisy_rot = rot_fn(noisy, 2*th.pi/5.0, k)
-                        noise_pred = inv_rot_fn(model(noisy_rot, timesteps), 2*th.pi/5.0, k)
-                        loss += F.mse_loss(noise_pred, noise)
-                    loss = loss/5.0
-                else:
-                    noise_pred = model(noisy, timesteps)
-                    loss = F.mse_loss(noise_pred, noise)
-            elif args.pred_type == "x":
-                if args.g_equiv and args.g_input == "C5":
-                    loss = 0
-                    for k in range(0,5):
-                        noisy_rot = rot_fn(noisy, 2*th.pi/5.0, k)
-                        x_pred = inv_rot_fn(model(noisy_rot, timesteps), 2*th.pi/5.0, k)
-                        loss += F.mse_loss(x_pred, batch)
-                    loss = loss/5.0
-                else:
-                    x_pred = model(noisy, timesteps)
-                    loss = F.mse_loss(x_pred, batch)
+            # Compute the loss using the selected loss function
+            loss = loss_fn(noisy, timesteps, noise, batch)
             loss.backward()
-
             # nn.utils.clip_grad_norm_(model.parameters(), 1.0) # TODO: removed this line to speed up convergence.
             optimizer.step()
             
@@ -242,7 +327,6 @@ def main():
                         sample = noise_scheduler.step(residual, t[0], sample)
 
                     frame = sample.detach().cpu().numpy()
-                    frames.append(frame)
 
                     logger.log("Saving plot...")
                     plt.figure(figsize=(8, 8))
